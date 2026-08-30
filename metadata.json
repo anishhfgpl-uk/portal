@@ -1,0 +1,7 @@
+{
+  "name": "Anish Technologies - GST Billing & Tally Hub",
+  "description": "Professional GST Billing Portal with direct Tally Prime XML HTTP API integration, company profile management, freight/labour expense tracking, and seamless voucher exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
