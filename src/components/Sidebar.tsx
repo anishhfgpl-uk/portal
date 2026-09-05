@@ -14,6 +14,7 @@ import {
   HelpCircle,
   Zap,
   ShieldCheck,
+  ClipboardList,
 } from 'lucide-react';
 import { ImportStatusState, SellerInfo } from '../types';
 
@@ -64,6 +65,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: savedInvoiceCount > 0 ? savedInvoiceCount : null,
     },
     {
+      id: 'delivery-challan',
+      label: 'Delivery Challans',
+      icon: ClipboardList,
+      badge: 'Offline',
+      badgeColor: 'bg-amber-500/20 text-amber-300',
+    },
+    {
       id: 'gstr-1',
       label: 'GSTR-1 Portal Return',
       icon: ShieldCheck,
@@ -106,7 +114,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col h-screen shrink-0 select-none border-r border-slate-800">
-      {/* Brand Header */}
       <div className="p-4 border-b border-slate-800/80 flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-blue-500/20">
@@ -123,7 +130,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Navigation Links */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 px-3 pb-2">
           Operations
@@ -135,7 +141,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               id={`nav-${item.id}`}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                if (item.id === 'delivery-challan') {
+                  window.location.href = '/challan.html';
+                  return;
+                }
+                setActiveTab(item.id);
+              }}
               className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 isActive
                   ? 'bg-blue-600 text-white shadow-sm font-semibold'
@@ -160,9 +172,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </nav>
 
-      {/* Tally Actions & Live Status Area */}
       <div className="p-3 bg-slate-950/70 border-t border-slate-800 space-y-2.5">
-        {/* Tally Connection Header */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center space-x-2">
             <span
@@ -191,7 +201,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/* Action Buttons */}
         <div className="space-y-1.5 pt-1">
           <button
             id="btnImportDebtors"
@@ -232,7 +241,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/* Live Status Display Message */}
         <div
           id="import-status"
           className={`p-2 rounded text-[11px] leading-relaxed border transition ${
