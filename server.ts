@@ -53,7 +53,6 @@ async function startServer() {
         });
 
         clearTimeout(timeoutId);
-
         const responseText = await tallyResponse.text();
 
         return res.status(200).json({
@@ -129,8 +128,21 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
+
+    // Serve the production build, including assets generated under /portal/.
     app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
+
+    // Canonical portal URL.
+    app.get("/", (_req, res) => {
+      res.redirect(302, "/portal/");
+    });
+
+    // SPA fallback for /portal and nested client-side routes.
+    // Use middleware instead of app.get("*") so Express 5 path parsing cannot break startup.
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      if (!req.path.startsWith("/portal")) return next();
+      if (path.extname(req.path)) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
