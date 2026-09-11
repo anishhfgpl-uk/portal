@@ -4,8 +4,12 @@ import { extractPanFromGstin, extractStateCodeFromGstin, getStateCodeByName, get
 export interface Gstr1TallyImportResult { invoices: Invoice[]; rawCount: number; period: string; }
 
 const cleanText = (value: string) => (value || '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
-const nodeText = (el: Element, name: string) => cleanText(el.getElementsByTagName(name)[0]?.textContent || '');
-const attrOrNode = (el: Element, attr: string, node: string) => cleanText(el.getAttribute(attr) || nodeText(el, node));
+const nodeText = (el: Element, name: string) => {
+  const attr = el.getAttribute(name) || el.getAttribute(name.toUpperCase()) || el.getAttribute(name.toLowerCase());
+  if (attr?.trim()) return cleanText(attr);
+  return cleanText(el.getElementsByTagName(name)[0]?.textContent || '');
+};
+const attrOrNode = (el: Element, attr: string, node: string) => cleanText(el.getAttribute(attr) || el.getAttribute(attr.toUpperCase()) || nodeText(el, node));
 const money = (v: string) => Math.abs(Number(String(v || '').replace(/,/g, '')) || 0);
 
 export function monthRange(period: string) {
@@ -21,7 +25,7 @@ export function repairXmlForParsing(xml: string) {
 }
 
 export function buildSalesRequest(from: string, to: string) {
-  return `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>GSTR1SalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVFROMDATE TYPE="Date">${from}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="GSTR1SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No"><TYPE>Voucher</TYPE><FILTER>GSTR1IsSales</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN,AllInventoryEntries.GSTOVRDIGSTRATE,AllInventoryEntries.GSTOVRCGSTRATE</FETCH><FETCH>LedgerEntries.LedgerName,LedgerEntries.Amount</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="GSTR1IsSales" ISMODIFY="No" ISFIXED="No" ISINTERNAL="No">$$IsSales:$VoucherTypeName</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+  return `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>GSTR1SalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVFROMDATE TYPE="Date">${from}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="GSTR1SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No"><TYPE>Voucher</TYPE><FILTER>GSTR1IsSales</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN,AllInventoryEntries.GSTOVRDIGSTRATE,AllInventoryEntries.GSTOVRCGSTRATE,AllInventoryEntries.GSTOVRSGSTRATE</FETCH><FETCH>LedgerEntries.LedgerName,LedgerEntries.Amount,LedgerEntries.IsPartyLedger</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="GSTR1IsSales" ISMODIFY="No" ISFIXED="No" ISINTERNAL="No">$$IsSales:$VoucherTypeName</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 }
 
 export async function requestTally(xml: string, tallyUrl: string) {
@@ -95,7 +99,7 @@ export function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
 
     if (!items.length) {
       const taxable = ledgerTaxable || money(nodeText(vch,'AMOUNT'));
-      items.push({ id:`gstr-tally-${index+1}-1`, name:'Sales / Services', hsn:'', qty:1, unit:'Nos', rate:taxable, discountPercent:0, gstRate:0, taxableAmount:taxable, cgstAmount:0, sgstAmount:0, igstAmount:0, totalAmount:taxable });
+      if (taxable > 0) items.push({ id:`gstr-tally-${index+1}-1`, name:'Sales / Services', hsn:'', qty:1, unit:'Nos', rate:taxable, discountPercent:0, gstRate:0, taxableAmount:taxable, cgstAmount:0, sgstAmount:0, igstAmount:0, totalAmount:taxable });
     }
 
     const subtotalTaxable = items.reduce((n,x)=>n+x.taxableAmount,0);
@@ -107,15 +111,13 @@ export function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
     const actualCess = ledgerCess;
     const hasActualTax = actualCgst + actualSgst + actualIgst + actualCess > 0;
     const explicitRate = items.find(x => x.gstRate > 0)?.gstRate || 0;
-    if (!hasActualTax && !explicitRate) {
-      throw new Error(`Invoice ${invoiceNo}: Tally se GST amount/rate nahi mila. Is invoice ko guess karke 18% nahi lagaya gaya.`);
-    }
+    if (!hasActualTax && !explicitRate) console.warn(`Invoice ${invoiceNo}: Tally se GST amount/rate nahi mila; invoice retained with GST 0 for review.`);
 
     items.forEach(item => {
       const share = item.taxableAmount / subtotalTaxable;
-      item.cgstAmount = hasActualTax ? Number((actualCgst * share).toFixed(2)) : (!isInterState ? Number((item.taxableAmount * explicitRate / 200).toFixed(2)) : 0);
-      item.sgstAmount = hasActualTax ? Number((actualSgst * share).toFixed(2)) : (!isInterState ? Number((item.taxableAmount * explicitRate / 200).toFixed(2)) : 0);
-      item.igstAmount = hasActualTax ? Number((actualIgst * share).toFixed(2)) : (isInterState ? Number((item.taxableAmount * explicitRate / 100).toFixed(2)) : 0);
+      item.cgstAmount = hasActualTax ? Number((actualCgst * share).toFixed(2)) : (!isInterState && explicitRate ? Number((item.taxableAmount * explicitRate / 200).toFixed(2)) : 0);
+      item.sgstAmount = hasActualTax ? Number((actualSgst * share).toFixed(2)) : (!isInterState && explicitRate ? Number((item.taxableAmount * explicitRate / 200).toFixed(2)) : 0);
+      item.igstAmount = hasActualTax ? Number((actualIgst * share).toFixed(2)) : (isInterState && explicitRate ? Number((item.taxableAmount * explicitRate / 100).toFixed(2)) : 0);
       const itemTax = item.cgstAmount + item.sgstAmount + item.igstAmount;
       item.gstRate = itemTax > 0 ? Number(((itemTax / item.taxableAmount) * 100).toFixed(2)) : 0;
       item.totalAmount = item.taxableAmount + itemTax;
@@ -127,11 +129,11 @@ export function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
     const totalTax = totalCgst + totalSgst + totalIgst;
     const exactTotal = subtotalTaxable + totalTax + actualCess;
     const grandTotal = Number(exactTotal.toFixed(2));
-    const roundOff = Number((grandTotal - subtotalTaxable - totalTax - actualCess).toFixed(2));
+    const roundOff = 0;
     const tallyGuid = nodeText(vch,'GUID');
     const tallyMasterId = nodeText(vch,'MASTERID');
 
-    invoices.push({ id:`tally-${tallyGuid || tallyMasterId || `${invoiceNo}-${invoiceDate}`}`, invoiceNo, invoiceDate, sellerState:seller.state, sellerStateCode:seller.stateCode, sellerGstin:seller.gstin, sellerName:seller.name, sellerAddress:seller.address, sellerPhone:seller.phone, partyName, gstin, mobile:'', partyState, stateCode, pinCode:'', city:'', completeAddress:'', pan:gstin ? extractPanFromGstin(gstin) : '', registrationType:gstin ? 'Regular' : 'Unregistered', items, subtotalTaxable, totalCgst, totalSgst, totalIgst, totalTax, roundOff, grandTotal, amountInWords:numberToIndianWords(grandTotal), isInterState, tallySyncStatus:'synced', tallySyncDate:new Date().toISOString(), tallyGuid, tallyMasterId, tallyVoucherType:nodeText(vch,'VOUCHERTYPENAME') || 'Sales', source:'tally_import', isDuplicateProtected:true, createdAt:new Date().toISOString(), notes:nodeText(vch,'NARRATION') || `Imported from Tally Prime (${invoiceNo})` });
+    invoices.push({ id:`tally-${tallyGuid || tallyMasterId || `${invoiceNo}-${invoiceDate}`}`, invoiceNo, invoiceDate, sellerState:seller.state, sellerStateCode:seller.stateCode, sellerGstin:seller.gstin, sellerName:seller.name, sellerAddress:seller.address, sellerPhone:seller.phone, partyName, gstin, mobile:'', partyState, stateCode, pinCode:'', city:'', completeAddress:nodeText(vch,'BASICBUYERADDRESS') || nodeText(vch,'ADDRESS'), pan:gstin ? extractPanFromGstin(gstin) : '', registrationType:gstin ? 'Regular' : 'Unregistered', items, subtotalTaxable, totalCgst, totalSgst, totalIgst, totalTax, roundOff, grandTotal, amountInWords:numberToIndianWords(grandTotal), isInterState, tallySyncStatus:'synced', tallySyncDate:new Date().toISOString(), tallyGuid, tallyMasterId, tallyVoucherType:nodeText(vch,'VOUCHERTYPENAME') || 'Sales', source:'tally_import', isDuplicateProtected:true, createdAt:new Date().toISOString(), notes:nodeText(vch,'NARRATION') || `Imported from Tally Prime (${invoiceNo})` });
   });
   return invoices;
 }
