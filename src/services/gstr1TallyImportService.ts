@@ -16,6 +16,15 @@ function monthRange(period: string) {
   return { from: `1-${names[mm - 1]}-${yyyy}`, to: `${last}-${names[mm - 1]}-${yyyy}` };
 }
 
+function repairXmlForParsing(xml: string) {
+  // Tally normally escapes ampersands, but some ledger/master names can contain a
+  // literal '&'. Browser DOMParser then reports parsererror even though the voucher
+  // data itself is usable. Repair only bare ampersands; preserve valid XML entities.
+  return String(xml || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/&(?!#(?:\d+|x[0-9a-fA-F]+);|[A-Za-z][A-Za-z0-9]+;)/g, '&amp;');
+}
+
 // One lightweight collection request for the selected month. Do not use Voucher
 // Register or one-request-per-day: both make Tally build a report repeatedly and can
 // freeze large companies. Tally's collection API lets us fetch only the methods needed.
@@ -83,8 +92,12 @@ function parseQty(raw: string) {
 }
 
 function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
-  const doc = new DOMParser().parseFromString(xml.replace(/^\uFEFF/, ''), 'text/xml');
-  if (doc.getElementsByTagName('parsererror').length) throw new Error('Tally ka XML response valid nahi hai.');
+  const repairedXml = repairXmlForParsing(xml);
+  const doc = new DOMParser().parseFromString(repairedXml, 'text/xml');
+  if (doc.getElementsByTagName('parsererror').length) {
+    const preview = cleanText(String(xml || '').slice(0, 500));
+    throw new Error(`Tally XML response valid nahi hai. Tally response: ${preview || 'empty response'}`);
+  }
   const vouchers = Array.from(doc.getElementsByTagName('VOUCHER'));
   const invoices: Invoice[] = [];
   const sellerState = (seller.state || getStateNameByCode(seller.stateCode) || 'Delhi').toLowerCase();
