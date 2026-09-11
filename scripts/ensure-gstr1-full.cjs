@@ -20,14 +20,15 @@ function patch(file, replacements) {
   if (changed) fs.writeFileSync(file, s, 'utf8');
 }
 
-// Repair duplicate declarations left by an earlier non-idempotent run.
+// Repair duplicate declarations left by earlier non-idempotent runs.
+// Handle both LF and CRLF files.
 function normalizeReport(file) {
   let s = fs.readFileSync(file, 'utf8');
-  const duplicateSource = '  const sourceInvoices = tallyInvoices ?? invoices;\n';
-  const matches = s.match(/  const sourceInvoices = tallyInvoices \?\? invoices;\n/g) || [];
+  const re = /^[ \t]*const sourceInvoices = tallyInvoices \?\? invoices;\r?\n/gm;
+  const matches = s.match(re) || [];
   if (matches.length > 1) {
     let seen = 0;
-    s = s.replace(/  const sourceInvoices = tallyInvoices \?\? invoices;\n/g, () => (++seen === 1 ? duplicateSource : ''));
+    s = s.replace(re, (line) => (++seen === 1 ? line : ''));
     fs.writeFileSync(file, s, 'utf8');
   }
 }
