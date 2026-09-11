@@ -21,8 +21,8 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Tally proxy. GSTR-1 uses one lightweight Collection request for the selected
-  // month instead of repeatedly exporting the heavy Voucher Register report.
+  // Tally proxy for explicit GSTR-1 exports. Keep this path separate from the
+  // connection test so simply checking Tally never sends an XML export request.
   app.post("/api/tally/request", async (req, res) => {
     try {
       const tallyUrl = req.body.url || "http://127.0.0.1:9000";
@@ -33,7 +33,7 @@ async function startServer() {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
 
       try {
         const tallyResponse = await fetch(tallyUrl, {
@@ -45,25 +45,17 @@ async function startServer() {
 
         clearTimeout(timeoutId);
         const responseText = await tallyResponse.text();
-
-        return res.status(200).json({
-          success: true,
-          status: tallyResponse.status,
-          xml: responseText,
-        });
+        return res.status(200).json({ success: true, status: tallyResponse.status, xml: responseText });
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
         const isTimeout = fetchErr.name === "AbortError";
         return res.status(502).json({
           success: false,
           error: isTimeout
-            ? `Connection to Tally at ${tallyUrl} timed out after 45s.`
+            ? `Connection to Tally at ${tallyUrl} timed out after 20s.`
             : `Failed to connect to Tally Prime at ${tallyUrl}: ${fetchErr.message}`,
           code: fetchErr.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
-          details: {
-            targetUrl: tallyUrl,
-            suggestion: "Check that Tally Prime is running, HTTP Server is enabled on port 9000, and a company is open.",
-          },
+          details: { targetUrl: tallyUrl, suggestion: "Check that Tally Prime is running, HTTP Server is enabled on port 9000, and a company is open." },
         });
       }
     } catch (err: any) {
@@ -71,24 +63,38 @@ async function startServer() {
     }
   });
 
+  // IMPORTANT: connection test is intentionally non-invasive. A GET to Tally's
+  // HTTP endpoint confirms that the server is reachable without invoking Tally's
+  // XML export engine, which can lock/crash a busy TallyPrime instance.
   app.post("/api/tally/test", async (req, res) => {
-    const tallyUrl = req.body.url || "http://127.0.0.1:9000";
-    const testXml = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>`;
+    const tallyUrl = String(req.body?.url || "http://127.0.0.1:9000").replace(/\/$/, "");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const response = await fetch(tallyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "text/xml;charset=UTF-8" },
-        body: testXml,
+        method: "GET",
+        headers: { Accept: "text/plain, text/xml, */*" },
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
       const text = await response.text();
-      return res.json({ online: true, status: response.status, url: tallyUrl, xmlSample: text.substring(0, 300) });
+      return res.json({
+        online: response.ok,
+        status: response.status,
+        url: tallyUrl,
+        response: text.substring(0, 300),
+        xmlExportTested: false,
+      });
     } catch (error: any) {
-      return res.json({ online: false, url: tallyUrl, error: error.message, suggestion: "Ensure Tally Prime is open with F1 > Settings > Connectivity > HTTP Server enabled on Port 9000." });
+      clearTimeout(timeoutId);
+      return res.json({
+        online: false,
+        url: tallyUrl,
+        error: error.name === "AbortError" ? "Tally HTTP server did not respond within 3 seconds." : error.message,
+        xmlExportTested: false,
+        suggestion: "Ensure TallyPrime is open and HTTP Server is enabled on port 9000.",
+      });
     }
   });
 
