@@ -13,7 +13,7 @@ function salesRangeXml(from: string, to: string): string {
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>GSTR1AllSales</ID>
+    <ID>GSTR1MonthlySales</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -24,7 +24,7 @@ function salesRangeXml(from: string, to: string): string {
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="GSTR1AllSales" ISMODIFY="No">
+          <COLLECTION NAME="GSTR1MonthlySales" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE,VOUCHERTYPENAME,VOUCHERNUMBER,REFERENCE,PARTYLEDGERNAME,PARTYNAME,PARTYGSTIN,STATENAME,PLACEOFSUPPLY,COUNTRYOFRESIDENCE,BASICBUYERADDRESS,ADDRESS,NARRATION,GUID,MASTERID,ALLINVENTORYENTRIES.LIST,LEDGERENTRIES.LIST</FETCH>
             <FILTER>GSTR1SalesOnly</FILTER>
@@ -37,34 +37,29 @@ function salesRangeXml(from: string, to: string): string {
 </ENVELOPE>`;
 }
 
-/** Fetch a small date window so TallyPrime is not hit with a huge Voucher Register. */
-async function fetchWindow(from: Date, to: Date, config: TallyConfig, sellerInfo: SellerInfo): Promise<Invoice[]> {
+/** Fetch exactly one calendar month, like Tally's period/month selection. */
+async function fetchMonth(month: number, year: number, config: TallyConfig, sellerInfo: SellerInfo): Promise<Invoice[]> {
+  const from = new Date(year, month - 1, 1);
+  const to = new Date(year, month, 0);
   const result = await sendTallyRequest(salesRangeXml(tallyDate(from), tallyDate(to)), config);
   return parseInvoices(result.text, sellerInfo);
 }
 
 /**
- * Loads the complete financial year using strictly sequential 7-day windows.
- * This avoids the previous parallel recursive requests that could make Tally hang.
- * The parser is the GSTR-specific parser so HSN/GST values come from Tally XML
- * instead of a guessed default tax rate.
+ * Loads the complete financial year MONTH BY MONTH (April, May, ... March).
+ * Only one Tally request is active at a time. This matches how a user normally
+ * selects a month/period in Tally and avoids a huge financial-year request.
  */
 export async function fetchAllSalesVouchersFromTally(
   config: TallyConfig,
   sellerInfo: SellerInfo,
   financialYearStart: number,
 ): Promise<Invoice[]> {
-  const fyStart = new Date(financialYearStart, 3, 1);
-  const fyEnd = new Date(financialYearStart + 1, 2, 31);
   const all: Invoice[] = [];
   const seen = new Set<string>();
 
-  for (let cursor = new Date(fyStart); cursor <= fyEnd; ) {
-    const end = new Date(cursor);
-    end.setDate(end.getDate() + 6);
-    if (end > fyEnd) end.setTime(fyEnd.getTime());
-
-    const rows = await fetchWindow(cursor, end, config, sellerInfo);
+  for (let month = 4; month <= 12; month++) {
+    const rows = await fetchMonth(month, financialYearStart, config, sellerInfo);
     for (const invoice of rows) {
       const key = `${invoice.tallyGuid || invoice.tallyMasterId || ''}|${invoice.invoiceNo || ''}|${invoice.invoiceDate || ''}|${invoice.gstin || ''}`;
       if (!seen.has(key)) {
@@ -72,9 +67,17 @@ export async function fetchAllSalesVouchersFromTally(
         all.push(invoice);
       }
     }
+  }
 
-    cursor = new Date(end);
-    cursor.setDate(cursor.getDate() + 1);
+  for (let month = 1; month <= 3; month++) {
+    const rows = await fetchMonth(month, financialYearStart + 1, config, sellerInfo);
+    for (const invoice of rows) {
+      const key = `${invoice.tallyGuid || invoice.tallyMasterId || ''}|${invoice.invoiceNo || ''}|${invoice.invoiceDate || ''}|${invoice.gstin || ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        all.push(invoice);
+      }
+    }
   }
 
   return all;
