@@ -1,5 +1,6 @@
 import { Invoice, SellerInfo, TallyConfig } from '../types';
-import { sendTallyRequest, parseSalesVouchersXML } from './tallyService';
+import { sendTallyRequest } from './tallyService';
+import { parseInvoices } from './gstr1TallyImportService';
 
 function tallyDate(date: Date): string {
   const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -36,28 +37,25 @@ function salesRangeXml(from: string, to: string): string {
 </ENVELOPE>`;
 }
 
-/**
- * Fetch one small date window. Keeping the window small is important because
- * TallyPrime can become unresponsive when a huge Voucher Collection is requested.
- */
+/** Fetch a small date window so TallyPrime is not hit with a huge Voucher Register. */
 async function fetchWindow(from: Date, to: Date, config: TallyConfig, sellerInfo: SellerInfo): Promise<Invoice[]> {
   const result = await sendTallyRequest(salesRangeXml(tallyDate(from), tallyDate(to)), config);
-  const parsed = parseSalesVouchersXML(result.text, sellerInfo);
-  return parsed.invoices || [];
+  return parseInvoices(result.text, sellerInfo);
 }
 
 /**
- * Loads the entire financial year without parallel Tally requests.
- * Requests are serial and limited to 7 calendar days each, which prevents the
- * repeated full-register fetch that was making Tally hang.
+ * Loads the complete financial year using strictly sequential 7-day windows.
+ * This avoids the previous parallel recursive requests that could make Tally hang.
+ * The parser is the GSTR-specific parser so HSN/GST values come from Tally XML
+ * instead of a guessed default tax rate.
  */
 export async function fetchAllSalesVouchersFromTally(
   config: TallyConfig,
   sellerInfo: SellerInfo,
   financialYearStart: number,
 ): Promise<Invoice[]> {
-  const fyStart = new Date(financialYearStart, 3, 1); // 1 Apr
-  const fyEnd = new Date(financialYearStart + 1, 2, 31); // 31 Mar
+  const fyStart = new Date(financialYearStart, 3, 1);
+  const fyEnd = new Date(financialYearStart + 1, 2, 31);
   const all: Invoice[] = [];
   const seen = new Set<string>();
 
