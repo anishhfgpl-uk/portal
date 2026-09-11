@@ -1,13 +1,8 @@
 import { Invoice, InvoiceItemRow, SellerInfo } from '../types';
 import { extractPanFromGstin, extractStateCodeFromGstin, getStateCodeByName, getStateNameByCode, numberToIndianWords } from '../utils/gstUtils';
 
-export interface Gstr1TallyImportResult {
-  invoices: Invoice[];
-  rawCount: number;
-  period: string;
-}
+export interface Gstr1TallyImportResult { invoices: Invoice[]; rawCount: number; period: string; }
 
-const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 const cleanText = (value: string) => (value || '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
 const nodeText = (el: Element, name: string) => cleanText(el.getElementsByTagName(name)[0]?.textContent || '');
 const attrOrNode = (el: Element, attr: string, node: string) => cleanText(el.getAttribute(attr) || nodeText(el, node));
@@ -17,13 +12,13 @@ function monthRange(period: string) {
   const mm = Number(period.slice(0, 2));
   const yyyy = Number(period.slice(2));
   const last = new Date(yyyy, mm, 0).getDate();
-  return {
-    from: `${String(mm).padStart(2, '0')}-01-${yyyy}`,
-    to: `${String(mm).padStart(2, '0')}-${String(last).padStart(2, '0')}-${yyyy}`,
-  };
+  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return { from: `1-${names[mm - 1]}-${yyyy}`, to: `${last}-${names[mm - 1]}-${yyyy}` };
 }
 
-function buildSalesRequest(period: string, companyName?: string) {
+// Deliberately uses the current/open Tally company. We do not send the portal company name
+// because a portal display name can differ from Tally's exact company name.
+function buildSalesRequest(period: string) {
   const { from, to } = monthRange(period);
   return `<ENVELOPE>
   <HEADER>
@@ -38,7 +33,6 @@ function buildSalesRequest(period: string, companyName?: string) {
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
         <SVFROMDATE TYPE="Date">${from}</SVFROMDATE>
         <SVTODATE TYPE="Date">${to}</SVTODATE>
-        ${companyName ? `<SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY>` : ''}
         <VOUCHERTYPENAME TYPE="String">Sales</VOUCHERTYPENAME>
       </STATICVARIABLES>
     </DESC>
@@ -51,20 +45,14 @@ async function requestTally(xml: string, tallyUrl: string) {
   const timeout = window.setTimeout(() => controller.abort(), 9000);
   try {
     const response = await fetch('/api/tally/request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: tallyUrl || 'http://127.0.0.1:9000', xml }),
-      signal: controller.signal,
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: tallyUrl || 'http://127.0.0.1:9000', xml }), signal: controller.signal,
     });
     const body = await response.json().catch(() => null);
-    if (!response.ok || !body?.success) {
-      throw new Error(body?.error || `Tally request failed (${response.status})`);
-    }
+    if (!response.ok || !body?.success) throw new Error(body?.error || `Tally request failed (${response.status})`);
     if (!body.xml || !String(body.xml).trim()) throw new Error('Tally ne koi sales data return nahi kiya.');
     return String(body.xml);
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  } finally { window.clearTimeout(timeout); }
 }
 
 function parseDate(raw: string) {
@@ -81,21 +69,16 @@ function parseQty(raw: string) {
 }
 
 function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml.replace(/^\uFEFF/, ''), 'text/xml');
+  const doc = new DOMParser().parseFromString(xml.replace(/^\uFEFF/, ''), 'text/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error('Tally ka XML response valid nahi hai.');
-
   const vouchers = Array.from(doc.getElementsByTagName('VOUCHER'));
   const invoices: Invoice[] = [];
   const sellerState = (seller.state || getStateNameByCode(seller.stateCode) || 'Delhi').toLowerCase();
 
   vouchers.forEach((vch, index) => {
     const type = (attrOrNode(vch, 'VCHTYPE', 'VOUCHERTYPENAME') || 'Sales').toLowerCase();
-    const isSales = type.includes('sales') || type === 'sales';
-    if (!isSales) return;
-    const cancelled = /^(yes|1|true)$/i.test(nodeText(vch, 'ISCANCELLED'));
-    const optional = /^(yes|1|true)$/i.test(nodeText(vch, 'ISOPTIONAL'));
-    if (cancelled || optional) return;
+    if (!type.includes('sales')) return;
+    if (/^(yes|1|true)$/i.test(nodeText(vch, 'ISCANCELLED')) || /^(yes|1|true)$/i.test(nodeText(vch, 'ISOPTIONAL'))) return;
 
     const invoiceNo = nodeText(vch, 'VOUCHERNUMBER') || nodeText(vch, 'REFERENCE') || `TALLY-${index + 1}`;
     const invoiceDate = parseDate(nodeText(vch, 'DATE'));
@@ -103,7 +86,7 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
     const gstin = (nodeText(vch, 'PARTYGSTIN') || nodeText(vch, 'GSTIN')).toUpperCase();
     const partyState = nodeText(vch, 'PLACEOFSUPPLY') || nodeText(vch, 'STATENAME') || seller.state || 'Delhi';
     const stateCode = extractStateCodeFromGstin(gstin) || getStateCodeByName(partyState) || seller.stateCode || '07';
-    const isInterState = (partyState || '').toLowerCase() !== sellerState;
+    const isInterState = partyState.toLowerCase() !== sellerState;
 
     const inventoryNodes = Array.from(vch.getElementsByTagName('ALLINVENTORYENTRIES.LIST'));
     const items: InvoiceItemRow[] = [];
@@ -119,24 +102,9 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
       const cgst = isInterState ? 0 : taxable * gstRate / 200;
       const sgst = isInterState ? 0 : taxable * gstRate / 200;
       const igst = isInterState ? taxable * gstRate / 100 : 0;
-      items.push({
-        id: `gstr-tally-${index + 1}-${itemIndex + 1}`,
-        name,
-        hsn,
-        qty: qtyData.qty,
-        unit: qtyData.unit,
-        rate: rate || (qtyData.qty ? taxable / qtyData.qty : 0),
-        discountPercent: 0,
-        gstRate,
-        taxableAmount: taxable,
-        cgstAmount: cgst,
-        sgstAmount: sgst,
-        igstAmount: igst,
-        totalAmount: taxable + cgst + sgst + igst,
-      });
+      items.push({ id:`gstr-tally-${index + 1}-${itemIndex + 1}`, name, hsn, qty:qtyData.qty, unit:qtyData.unit, rate:rate || (qtyData.qty ? taxable / qtyData.qty : 0), discountPercent:0, gstRate, taxableAmount:taxable, cgstAmount:cgst, sgstAmount:sgst, igstAmount:igst, totalAmount:taxable + cgst + sgst + igst });
     });
 
-    // Accounting-only sales vouchers still need to appear in GSTR-1.
     if (!items.length) {
       const ledgerNodes = Array.from(vch.getElementsByTagName('LEDGERENTRIES.LIST'));
       let taxable = 0;
@@ -150,13 +118,13 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
       const cgst = isInterState ? 0 : taxable * gstRate / 200;
       const sgst = isInterState ? 0 : taxable * gstRate / 200;
       const igst = isInterState ? taxable * gstRate / 100 : 0;
-      items.push({ id: `gstr-tally-${index + 1}-1`, name: 'Sales / Services', hsn: '', qty: 1, unit: 'Nos', rate: taxable, discountPercent: 0, gstRate, taxableAmount: taxable, cgstAmount: cgst, sgstAmount: sgst, igstAmount: igst, totalAmount: taxable + cgst + sgst + igst });
+      items.push({ id:`gstr-tally-${index + 1}-1`, name:'Sales / Services', hsn:'', qty:1, unit:'Nos', rate:taxable, discountPercent:0, gstRate, taxableAmount:taxable, cgstAmount:cgst, sgstAmount:sgst, igstAmount:igst, totalAmount:taxable + cgst + sgst + igst });
     }
 
-    const subtotalTaxable = items.reduce((n, x) => n + x.taxableAmount, 0);
-    const totalCgst = items.reduce((n, x) => n + x.cgstAmount, 0);
-    const totalSgst = items.reduce((n, x) => n + x.sgstAmount, 0);
-    const totalIgst = items.reduce((n, x) => n + x.igstAmount, 0);
+    const subtotalTaxable = items.reduce((n,x)=>n+x.taxableAmount,0);
+    const totalCgst = items.reduce((n,x)=>n+x.cgstAmount,0);
+    const totalSgst = items.reduce((n,x)=>n+x.sgstAmount,0);
+    const totalIgst = items.reduce((n,x)=>n+x.igstAmount,0);
     const totalTax = totalCgst + totalSgst + totalIgst;
     const grandTotal = Math.round(subtotalTaxable + totalTax);
     const roundOff = Number((grandTotal - subtotalTaxable - totalTax).toFixed(2));
@@ -164,52 +132,19 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
     const tallyMasterId = nodeText(vch, 'MASTERID');
 
     invoices.push({
-      id: `tally-${tallyGuid || tallyMasterId || `${invoiceNo}-${invoiceDate}`}`,
-      invoiceNo,
-      invoiceDate,
-      sellerState: seller.state,
-      sellerStateCode: seller.stateCode,
-      sellerGstin: seller.gstin,
-      sellerName: seller.name,
-      sellerAddress: seller.address,
-      sellerPhone: seller.phone,
-      partyName,
-      gstin,
-      mobile: '',
-      partyState,
-      stateCode,
-      pinCode: '',
-      city: '',
-      completeAddress: '',
-      pan: gstin ? extractPanFromGstin(gstin) : '',
-      registrationType: gstin ? 'Regular' : 'Unregistered',
-      items,
-      subtotalTaxable,
-      totalCgst,
-      totalSgst,
-      totalIgst,
-      totalTax,
-      roundOff,
-      grandTotal,
-      amountInWords: numberToIndianWords(grandTotal),
-      isInterState,
-      tallySyncStatus: 'synced',
-      tallySyncDate: new Date().toISOString(),
-      tallyGuid,
-      tallyMasterId,
-      tallyVoucherType: nodeText(vch, 'VOUCHERTYPENAME') || 'Sales',
-      source: 'tally_import',
-      isDuplicateProtected: true,
-      createdAt: new Date().toISOString(),
-      notes: nodeText(vch, 'NARRATION') || `Imported from Tally Prime (${invoiceNo})`,
+      id:`tally-${tallyGuid || tallyMasterId || `${invoiceNo}-${invoiceDate}`}`,
+      invoiceNo, invoiceDate, sellerState:seller.state, sellerStateCode:seller.stateCode, sellerGstin:seller.gstin, sellerName:seller.name, sellerAddress:seller.address, sellerPhone:seller.phone,
+      partyName, gstin, mobile:'', partyState, stateCode, pinCode:'', city:'', completeAddress:'', pan:gstin ? extractPanFromGstin(gstin) : '', registrationType:gstin ? 'Regular' : 'Unregistered', items,
+      subtotalTaxable, totalCgst, totalSgst, totalIgst, totalTax, roundOff, grandTotal, amountInWords:numberToIndianWords(grandTotal), isInterState,
+      tallySyncStatus:'synced', tallySyncDate:new Date().toISOString(), tallyGuid, tallyMasterId, tallyVoucherType:nodeText(vch,'VOUCHERTYPENAME') || 'Sales', source:'tally_import', isDuplicateProtected:true, createdAt:new Date().toISOString(), notes:nodeText(vch,'NARRATION') || `Imported from Tally Prime (${invoiceNo})`,
     });
   });
-
   return invoices;
 }
 
-export async function importGstr1SalesFromTally(period: string, seller: SellerInfo, tallyUrl = 'http://127.0.0.1:9000'): Promise<Gstr1TallyImportResult> {
-  const xml = await requestTally(buildSalesRequest(period, seller.name), tallyUrl);
-  const invoices = parseInvoices(xml, seller);
-  return { invoices, rawCount: Array.from(new DOMParser().parseFromString(xml, 'text/xml').getElementsByTagName('VOUCHER')).length, period };
+export async function importGstr1SalesFromTally(period: string, _seller: SellerInfo, tallyUrl = 'http://127.0.0.1:9000'): Promise<Gstr1TallyImportResult> {
+  const xml = await requestTally(buildSalesRequest(period), tallyUrl);
+  const invoices = parseInvoices(xml, _seller);
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  return { invoices, rawCount:Array.from(doc.getElementsByTagName('VOUCHER')).length, period };
 }
