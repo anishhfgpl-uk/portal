@@ -6,48 +6,40 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT || 3000;
 
-  // Support XML and JSON body parsing
   app.use(express.json({ limit: "50mb" }));
   app.use(express.text({ type: "text/xml", limit: "50mb" }));
 
-  // CORS headers for local testing
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(200);
-    }
+    if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
   });
 
-  // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Proxy endpoint to send XML to Tally Prime without browser CORS / PNA restrictions
+  // Server-side proxy to Tally. GSTR-1 now sends small, one-day requests so this
+  // endpoint must allow enough time for a single Tally export but must still abort
+  // a genuinely stuck request instead of leaving Tally/Node waiting forever.
   app.post("/api/tally/request", async (req, res) => {
     try {
       const tallyUrl = req.body.url || "http://127.0.0.1:9000";
       const xmlBody = typeof req.body === "string" ? req.body : req.body.xml;
 
       if (!xmlBody || !xmlBody.trim()) {
-        return res.status(400).json({
-          success: false,
-          error: "No XML body provided in request",
-        });
+        return res.status(400).json({ success: false, error: "No XML body provided in request" });
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       try {
         const tallyResponse = await fetch(tallyUrl, {
           method: "POST",
-          headers: {
-            "Content-Type": "text/xml;charset=UTF-8",
-          },
+          headers: { "Content-Type": "text/xml;charset=UTF-8" },
           body: xmlBody,
           signal: controller.signal,
         });
@@ -66,25 +58,20 @@ async function startServer() {
         return res.status(502).json({
           success: false,
           error: isTimeout
-            ? `Connection to Tally at ${tallyUrl} timed out after 10s.`
+            ? `Connection to Tally at ${tallyUrl} timed out after 15s.`
             : `Failed to connect to Tally Prime at ${tallyUrl}: ${fetchErr.message}`,
           code: fetchErr.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
           details: {
             targetUrl: tallyUrl,
-            suggestion:
-              "Check that Tally Prime is running, HTTP Server is enabled on port 9000, and a company is open.",
+            suggestion: "Check that Tally Prime is running, HTTP Server is enabled on port 9000, and a company is open.",
           },
         });
       }
     } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        error: err.message || "Internal server error during Tally request proxy",
-      });
+      return res.status(500).json({ success: false, error: err.message || "Internal server error during Tally request proxy" });
     }
   });
 
-  // Tally connectivity test endpoint
   app.post("/api/tally/test", async (req, res) => {
     const tallyUrl = req.body.url || "http://127.0.0.1:9000";
     const testXml = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>`;
@@ -92,53 +79,27 @@ async function startServer() {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-
       const response = await fetch(tallyUrl, {
         method: "POST",
         headers: { "Content-Type": "text/xml;charset=UTF-8" },
         body: testXml,
         signal: controller.signal,
       });
-
       clearTimeout(timeoutId);
       const text = await response.text();
-
-      return res.json({
-        online: true,
-        status: response.status,
-        url: tallyUrl,
-        xmlSample: text.substring(0, 300),
-      });
+      return res.json({ online: true, status: response.status, url: tallyUrl, xmlSample: text.substring(0, 300) });
     } catch (error: any) {
-      return res.json({
-        online: false,
-        url: tallyUrl,
-        error: error.message,
-        suggestion: "Ensure Tally Prime is open with F1 > Settings > Connectivity > HTTP Server enabled on Port 9000.",
-      });
+      return res.json({ online: false, url: tallyUrl, error: error.message, suggestion: "Ensure Tally Prime is open with F1 > Settings > Connectivity > HTTP Server enabled on Port 9000." });
     }
   });
 
-  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-
-    // Serve the production build, including assets generated under /portal/.
     app.use(express.static(distPath));
-
-    // Canonical portal URL.
-    app.get("/", (_req, res) => {
-      res.redirect(302, "/portal/");
-    });
-
-    // SPA fallback for /portal and nested client-side routes.
-    // Use middleware instead of app.get("*") so Express 5 path parsing cannot break startup.
+    app.get("/", (_req, res) => res.redirect(302, "/portal/"));
     app.use((req, res, next) => {
       if (req.method !== "GET" && req.method !== "HEAD") return next();
       if (!req.path.startsWith("/portal")) return next();
