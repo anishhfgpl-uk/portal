@@ -4,10 +4,14 @@ import { extractPanFromGstin, extractStateCodeFromGstin, getStateCodeByName } fr
 
 const clean = (v: string) => String(v || '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
 
-function value(el: Element, name: string): string {
-  const attr = el.getAttribute(name) || el.getAttribute(name.toUpperCase()) || el.getAttribute(name.toLowerCase());
-  if (attr) return clean(attr);
-  return clean(el.getElementsByTagName(name)[0]?.textContent || '');
+function value(el: Element, ...names: string[]): string {
+  for (const name of names) {
+    const attr = el.getAttribute(name) || el.getAttribute(name.toUpperCase()) || el.getAttribute(name.toLowerCase());
+    if (attr && clean(attr)) return clean(attr);
+    const node = el.getElementsByTagName(name)[0]?.textContent;
+    if (node && clean(node)) return clean(node);
+  }
+  return '';
 }
 
 function parseCompanyXml(xml: string): SellerInfo[] {
@@ -15,28 +19,39 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   const doc = new DOMParser().parseFromString(repaired, 'text/xml');
   if (doc.getElementsByTagName('parsererror').length) return [];
 
-  const elements = Array.from(doc.getElementsByTagName('COMPANY'));
-  const out: SellerInfo[] = [];
-  elements.forEach((comp, index) => {
-    const name = value(comp, 'NAME') || value(comp, 'BASICCOMPANYNAME');
-    if (!name) return;
+  const candidates: Element[] = [];
+  Array.from(doc.getElementsByTagName('COMPANY')).forEach(x => candidates.push(x));
+  Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(x => candidates.push(x));
+  Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => {
+    const company = x.getElementsByTagName('COMPANY')[0];
+    if (company) candidates.push(company);
+  });
 
-    const addressNodes = Array.from(comp.getElementsByTagName('ADDRESS'));
-    const address = addressNodes.map(x => clean(x.textContent || '')).filter(Boolean).join(', ') || value(comp, 'ADDRESS');
-    const state = value(comp, 'STATENAME') || value(comp, 'STATE');
-    const country = value(comp, 'COUNTRYNAME') || value(comp, 'COUNTRY') || 'India';
-    const gstin = (value(comp, 'GSTIN') || value(comp, 'PARTYGSTIN') || value(comp, 'VATREGISTRATIONNO')).toUpperCase();
+  const out: SellerInfo[] = [];
+  const seen = new Set<string>();
+  candidates.forEach((comp, index) => {
+    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY');
+    if (!name || seen.has(name.toLowerCase())) return;
+    seen.add(name.toLowerCase());
+
+    const addressLines = Array.from(comp.getElementsByTagName('ADDRESS')).map(x => clean(x.textContent || '')).filter(Boolean);
+    const address = addressLines.join(', ') || value(comp, 'ADDRESS', 'MAILINGADDRESS', 'COMPANYADDRESS');
+    const state = value(comp, 'STATENAME', 'STATE', 'MAILINGSTATE');
+    const country = value(comp, 'COUNTRYNAME', 'COUNTRY') || 'India';
+    const gstin = value(comp, 'GSTIN', 'PARTYGSTIN', 'VATREGISTRATIONNO', 'GSTREGISTRATIONNUMBER').toUpperCase();
     const stateCode = extractStateCodeFromGstin(gstin) || getStateCodeByName(state) || '';
-    const pan = (value(comp, 'PANNUMBER') || value(comp, 'INCOMETAXNUMBER') || (gstin ? extractPanFromGstin(gstin) : '')).toUpperCase();
-    const pincode = value(comp, 'PINCODE') || (address.match(/\b\d{6}\b/)?.[0] || '');
-    const mobile = value(comp, 'MOBILENUMBER') || value(comp, 'MOBILE');
-    const phone = value(comp, 'PHONENUMBER') || value(comp, 'TELEPHONENUMBER') || value(comp, 'PHONE') || mobile;
+    const pan = value(comp, 'PANNUMBER', 'INCOMETAXNUMBER', 'PAN').toUpperCase() || (gstin ? extractPanFromGstin(gstin) : '');
+    const pincode = value(comp, 'PINCODE', 'PINCODE1') || (address.match(/\b\d{6}\b/)?.[0] || '');
+    const mobile = value(comp, 'MOBILENUMBER', 'MOBILE', 'MOBILEPHONE', 'MOBILEPHONE1');
+    const phone = value(comp, 'PHONENUMBER', 'TELEPHONENUMBER', 'PHONE', 'TELEPHONE') || mobile;
+    const email = value(comp, 'EMAIL', 'EMAILID', 'EMAILADDRESS');
+    const website = value(comp, 'WEBSITE', 'WEB');
 
     out.push({
       id: `comp-tally-${index + 1}-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
       name,
-      tradeName: value(comp, 'MAILINGNAME') || undefined,
-      mailingName: value(comp, 'MAILINGNAME') || name,
+      tradeName: value(comp, 'MAILINGNAME', 'TRADENAME') || undefined,
+      mailingName: value(comp, 'MAILINGNAME', 'TRADENAME') || name,
       address,
       state: state || (stateCode ? stateCode : 'Delhi'),
       stateCode,
@@ -44,18 +59,18 @@ function parseCompanyXml(xml: string): SellerInfo[] {
       pincode,
       phone,
       mobile,
-      email: value(comp, 'EMAIL') || value(comp, 'EMAILID'),
-      website: value(comp, 'WEBSITE'),
+      email,
+      website,
       gstin,
       pan,
-      financialYearFrom: value(comp, 'STARTINGFROM'),
-      booksBeginningFrom: value(comp, 'BOOKSFROM'),
+      financialYearFrom: value(comp, 'STARTINGFROM', 'FINANCIALYEARFROM'),
+      booksBeginningFrom: value(comp, 'BOOKSFROM', 'BOOKSBEGINNINGFROM'),
       currencySymbol: value(comp, 'CURRENCYSYMBOL') || '₹',
       currencyFormalName: value(comp, 'CURRENCYFORMALNAME') || 'INR',
       tallyGuid: value(comp, 'GUID'),
       bankName: value(comp, 'BANKNAME'),
-      bankAccountNo: value(comp, 'BANKACCOUNTNUMBER') || value(comp, 'BANKACCOUNTNO'),
-      bankIfsc: (value(comp, 'IFSCODE') || value(comp, 'BANKIFSC')).toUpperCase(),
+      bankAccountNo: value(comp, 'BANKACCOUNTNUMBER', 'BANKACCOUNTNO'),
+      bankIfsc: value(comp, 'IFSCODE', 'BANKIFSC').toUpperCase(),
     });
   });
 
@@ -66,13 +81,16 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   return out;
 }
 
-const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyProfile</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="CurrentCompanyProfile" ISMODIFY="No"><TYPE>Company</TYPE><FETCH>NAME,MAILINGNAME,BASICCOMPANYFORMALNAME,ADDRESS,STATENAME,COUNTRYNAME,PINCODE,PHONENUMBER,MOBILENUMBER,TELEPHONENUMBER,EMAIL,EMAILID,WEBSITE,GSTIN,PARTYGSTIN,VATREGISTRATIONNO,PANNUMBER,INCOMETAXNUMBER,STARTINGFROM,ENDINGAT,BOOKSFROM,CURRENCYSYMBOL,CURRENCYFORMALNAME,BANKNAME,BANKACCOUNTNUMBER,IFSCODE,GUID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+// Tally's CompanyInfo collection is the reliable way to resolve the currently
+// open company. The previous TYPE=Company/FETCH request can return only a name
+// or an empty object on current TallyPrime releases.
+const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><OBJECT NAME="CurrentCompany"><LOCALFORMULA>CurrentCompany:##SVCURRENTCOMPANY</LOCALFORMULA></OBJECT><COLLECTION NAME="CompanyInfo"><OBJECTS>CurrentCompany</OBJECTS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
 export { DEFAULT_TALLY_CONFIG };
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
   const result = await sendTallyRequest(COMPANY_XML, config);
   const companies = parseCompanyXml(result.text);
-  if (!companies.length) throw new Error('Tally connected hai, lekin current company ki profile details XML mein nahi mili.');
+  if (!companies.length) throw new Error('Tally connected hai, lekin current company profile response nahi mila. TallyPrime me company open rakhein.');
   return companies;
 }
 
