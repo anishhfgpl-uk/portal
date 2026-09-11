@@ -20,6 +20,20 @@ function patch(file, replacements) {
   if (changed) fs.writeFileSync(file, s, 'utf8');
 }
 
+// Repair duplicate declarations left by an earlier non-idempotent run.
+function normalizeReport(file) {
+  let s = fs.readFileSync(file, 'utf8');
+  const duplicateSource = '  const sourceInvoices = tallyInvoices ?? invoices;\n';
+  const matches = s.match(/  const sourceInvoices = tallyInvoices \?\? invoices;\n/g) || [];
+  if (matches.length > 1) {
+    let seen = 0;
+    s = s.replace(/  const sourceInvoices = tallyInvoices \?\? invoices;\n/g, () => (++seen === 1 ? duplicateSource : ''));
+    fs.writeFileSync(file, s, 'utf8');
+  }
+}
+
+normalizeReport(reportPath);
+
 patch(reportPath, [
   [
     "import React, { useState, useMemo } from 'react';",
@@ -35,7 +49,7 @@ patch(reportPath, [
   ],
   [
     "  const currentFilingPeriodCode = `${String(selectedMonthNum).padStart(2, '0')}${selectedMonthYear}`;",
-    "  const currentFilingPeriodCode = `${String(selectedMonthNum).padStart(2, '0')}${selectedMonthYear}`;\n\n  // Load the complete Tally sales dataset for the selected FY. The fetcher\n  // automatically splits date ranges when a response hits the batch boundary.\n  useEffect(() => {\n    let cancelled = false;\n    const loadAllTallySales = async () => {\n      setTallyLoading(true);\n      setTallyMessage('Loading all sales vouchers from Tally...');\n      try {\n        const rows = await fetchAllSalesVouchersFromTally(DEFAULT_TALLY_CONFIG, sellerInfo, fyStartYear);\n        if (!cancelled) {\n          setTallyInvoices(rows);\n          setTallyMessage(`Tally: ${rows.length.toLocaleString('en-IN')} sales vouchers loaded.`);\n        }\n      } catch (err) {\n        if (!cancelled) {\n          setTallyInvoices(null);\n          setTallyMessage('Tally fetch failed; showing existing portal invoices.');\n        }\n      } finally {\n        if (!cancelled) setTallyLoading(false);\n      }\n    };\n    loadAllTallySales();\n    return () => { cancelled = true; };\n  }, [sellerInfo.gstin, sellerInfo.name, fyStartYear]);\n\n  const sourceInvoices = tallyInvoices ?? invoices;"
+    "  const currentFilingPeriodCode = `${String(selectedMonthNum).padStart(2, '0')}${selectedMonthYear}`;\n\n  useEffect(() => {\n    let cancelled = false;\n    const loadAllTallySales = async () => {\n      setTallyLoading(true);\n      setTallyMessage('Loading all sales vouchers from Tally...');\n      try {\n        const rows = await fetchAllSalesVouchersFromTally(DEFAULT_TALLY_CONFIG, sellerInfo, fyStartYear);\n        if (!cancelled) {\n          setTallyInvoices(rows);\n          setTallyMessage(`Tally: ${rows.length.toLocaleString('en-IN')} sales vouchers loaded.`);\n        }\n      } catch (err) {\n        if (!cancelled) {\n          setTallyInvoices(null);\n          setTallyMessage('Tally fetch failed; showing existing portal invoices.');\n        }\n      } finally {\n        if (!cancelled) setTallyLoading(false);\n      }\n    };\n    loadAllTallySales();\n    return () => { cancelled = true; };\n  }, [sellerInfo.gstin, sellerInfo.name, fyStartYear]);\n\n  const sourceInvoices = tallyInvoices ?? invoices;"
   ],
   [
     "    const companyInvoices = invoices.filter((inv) => {",
