@@ -104,6 +104,18 @@ const key = (seller: SellerInfo, period: string) => `gstr1_extended_${seller.gst
 const n = (v: unknown) => Number.isFinite(Number(v)) ? Number(v) : 0;
 const r2 = (v: unknown) => Math.round(n(v) * 100) / 100;
 
+// GSTN JSON uses DD-MM-YYYY dates. The UI may use the browser's YYYY-MM-DD date input.
+function gstDate(v: string | undefined) {
+  if (!v) return undefined;
+  const s = String(v).trim();
+  if (/^\d{2}-\d{2}-\d{4}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-');
+    return `${d}-${m}-${y}`;
+  }
+  return s;
+}
+
 export function emptyGstr1ExtendedData(): Gstr1ExtendedData {
   return { notesRegistered: [], notesUnregistered: [], exports: [], advances: [], advanceAdjustments: [], nilExempt: [], amendments: [], ecom: [], ecomAmendments: [] };
 }
@@ -122,8 +134,6 @@ export function saveGstr1ExtendedData(seller: SellerInfo, period: string, data: 
 
 export function createExtendedDataFromInvoices(invoices: Invoice[], seller: SellerInfo): Gstr1ExtendedData {
   const data = emptyGstr1ExtendedData();
-  // Existing invoice data is the source of truth. Optional future GSTR metadata is read without
-  // changing the Invoice type, so older invoices remain fully compatible.
   invoices.forEach((inv: Invoice & Record<string, any>) => {
     const meta = inv.gstr1;
     if (!meta) return;
@@ -134,43 +144,124 @@ export function createExtendedDataFromInvoices(invoices: Invoice[], seller: Sell
   return data;
 }
 
-function noteJson(rows: Gstr1NoteRow[]) {
+function noteJson(rows: Gstr1NoteRow[], registered: boolean) {
   return rows.map(x => ({
-    ctin: x.p_gst || undefined,
+    ...(registered && x.p_gst ? { ctin: x.p_gst.toUpperCase() } : {}),
+    ...(x.p_gst && !registered ? { p_gst: x.p_gst.toUpperCase() } : {}),
     nt_num: x.nt_num,
-    nt_dt: x.nt_dt,
-    ntty: x.ntty,
+    nt_dt: gstDate(x.nt_dt),
+    ntty: x.ntty || x.typ,
     rsn: x.rsn || undefined,
     val: r2(x.val),
     pos: x.pos,
     sply_ty: x.sply_ty,
-    p_gst: x.p_gst || undefined,
     p_num: x.p_num || undefined,
-    p_dt: x.p_dt || undefined,
-    itms: x.itms.map(i => ({ num: i.num, itm_det: { ...i.itm_det, txval: r2(i.itm_det.txval), iamt: r2(i.itm_det.iamt), camt: r2(i.itm_det.camt), samt: r2(i.itm_det.samt), csamt: r2(i.itm_det.csamt) } }))
+    p_dt: gstDate(x.p_dt),
+    itms: x.itms.map(i => ({
+      num: i.num,
+      itm_det: {
+        rt: r2(i.itm_det.rt),
+        txval: r2(i.itm_det.txval),
+        iamt: r2(i.itm_det.iamt),
+        camt: r2(i.itm_det.camt),
+        samt: r2(i.itm_det.samt),
+        csamt: r2(i.itm_det.csamt)
+      }
+    }))
   }));
 }
 
+function amendmentPayload(data: Gstr1ExtendedData) {
+  const out: Record<string, any> = {};
+  const rows = data.amendments;
+
+  const b2b = rows.filter(x => x.table === 'B2B').map(x => ({
+    ctin: (x.gstin || '').toUpperCase(),
+    inv: [{
+      oinum: x.originalNo,
+      oidt: gstDate(x.originalDate),
+      inum: x.amendedNo || x.originalNo,
+      idt: gstDate(x.amendedDate || x.originalDate),
+      val: r2(x.value),
+      pos: x.pos,
+      itms: [{ num: 1, itm_det: { rt: r2(x.rate), txval: r2(x.taxable), iamt: r2(x.igst), camt: r2(x.cgst), samt: r2(x.sgst), csamt: 0 } }]
+    }]
+  }));
+  if (b2b.length) out.b2ba = b2b;
+
+  const b2cl = rows.filter(x => x.table === 'B2CL').map(x => ({
+    pos: x.pos,
+    inv: [{
+      oinum: x.originalNo,
+      oidt: gstDate(x.originalDate),
+      inum: x.amendedNo || x.originalNo,
+      idt: gstDate(x.amendedDate || x.originalDate),
+      val: r2(x.value),
+      itms: [{ num: 1, itm_det: { rt: r2(x.rate), txval: r2(x.taxable), iamt: r2(x.igst), csamt: 0 } }]
+    }]
+  }));
+  if (b2cl.length) out.b2cla = b2cl;
+
+  const b2cs = rows.filter(x => x.table === 'B2CS').map(x => ({
+    omon: x.originalPeriod?.slice(0, 2),
+    oyr: x.originalPeriod?.slice(2),
+    pos: x.pos,
+    sply_ty: Number(x.pos) === 0 ? 'INTRA' : 'INTER',
+    rt: r2(x.rate),
+    txval: r2(x.taxable),
+    iamt: r2(x.igst),
+    camt: r2(x.cgst),
+    samt: r2(x.sgst),
+    csamt: 0
+  }));
+  if (b2cs.length) out.b2csa = b2cs;
+
+  const exp = rows.filter(x => x.table === 'EXP').map(x => ({
+    oinum: x.originalNo,
+    oidt: gstDate(x.originalDate),
+    inum: x.amendedNo || x.originalNo,
+    idt: gstDate(x.amendedDate || x.originalDate),
+    val: r2(x.value),
+    itms: [{ num: 1, itm_det: { rt: r2(x.rate), txval: r2(x.taxable), iamt: r2(x.igst), csamt: 0 } }]
+  }));
+  if (exp.length) out.expa = exp;
+
+  return out;
+}
+
 export function buildExtendedGstr1Sections(data: Gstr1ExtendedData) {
-  const exp = data.exports.map(x => ({ exp_typ: x.exp_typ || x.typ, inum: x.inum, idt: x.idt, val: r2(x.val), sbpcode: x.sbpcode || undefined, sbnum: x.sbnum || undefined, sbdt: x.sbdt || undefined, port: x.port || undefined, itms: [{ num: 1, itm_det: { txval: r2(x.txval), rt: r2(x.rt), iamt: r2(x.iamt), csamt: r2(x.csamt) } }] }));
+  const exp = data.exports.map(x => ({
+    exp_typ: x.exp_typ || x.typ,
+    inum: x.inum,
+    idt: gstDate(x.idt),
+    val: r2(x.val),
+    ...(x.sbpcode ? { sbpcode: x.sbpcode } : {}),
+    ...(x.sbnum ? { sbnum: x.sbnum } : {}),
+    ...(x.sbdt ? { sbdt: gstDate(x.sbdt) } : {}),
+    ...(x.port ? { port: x.port } : {}),
+    itms: [{ num: 1, itm_det: { txval: r2(x.txval), rt: r2(x.rt), iamt: r2(x.iamt), csamt: r2(x.csamt) } }]
+  }));
   const at = data.advances.map(x => ({ pos: x.pos, sply_ty: x.sply_ty, rt: r2(x.rt), ad_amt: r2(x.ad_amt), iamt: r2(x.iamt), camt: r2(x.camt), samt: r2(x.samt), csamt: r2(x.csamt) }));
   const txpd = data.advanceAdjustments.map(x => ({ pos: x.pos, sply_ty: x.sply_ty, rt: r2(x.rt), ad_amt: r2(x.ad_amt), iamt: r2(x.iamt), camt: r2(x.camt), samt: r2(x.samt), csamt: r2(x.csamt) }));
   const nil = data.nilExempt.map(x => ({ sply_typ: x.sply_typ, nil_amt: r2(x.nil_amt), ex_amt: r2(x.ex_amt), ngsup_amt: r2(x.ngsup_amt) }));
-  const ecom = data.ecom.map(x => ({ etin: x.etin, typ: x.typ, pos: x.pos, txval: r2(x.txval), rt: r2(x.rt), iamt: r2(x.iamt), camt: r2(x.camt), samt: r2(x.samt), csamt: r2(x.csamt) }));
+  const ecom = data.ecom.map(x => ({ etin: x.etin.toUpperCase(), typ: x.typ, pos: x.pos, txval: r2(x.txval), rt: r2(x.rt), iamt: r2(x.iamt), camt: r2(x.camt), samt: r2(x.samt), csamt: r2(x.csamt) }));
+  const ecoma = data.ecomAmendments.map(x => ({ etin: x.etin.toUpperCase(), typ: x.typ, pos: x.pos, txval: r2(x.txval), rt: r2(x.rt), iamt: r2(x.iamt), camt: r2(x.camt), samt: r2(x.samt), csamt: r2(x.csamt) }));
+
   return {
-    ...(data.notesRegistered.length ? { cdnr: noteJson(data.notesRegistered) } : {}),
-    ...(data.notesUnregistered.length ? { cdnur: noteJson(data.notesUnregistered) } : {}),
+    ...(data.notesRegistered.length ? { cdnr: noteJson(data.notesRegistered, true) } : {}),
+    ...(data.notesUnregistered.length ? { cdnur: noteJson(data.notesUnregistered, false) } : {}),
     ...(exp.length ? { exp } : {}),
     ...(at.length ? { at } : {}),
     ...(txpd.length ? { txpd } : {}),
     ...(nil.length ? { nil } : {}),
     ...(ecom.length ? { ecom } : {}),
-    ...(data.amendments.length ? { amendments: data.amendments.map(x => ({ ...x, value: r2(x.value), taxable: r2(x.taxable), rate: r2(x.rate), igst: r2(x.igst), cgst: r2(x.cgst), sgst: r2(x.sgst) })) } : {}),
-    ...(data.ecomAmendments.length ? { ecoma: data.ecomAmendments.map(x => ({ ...x, txval: r2(x.txval), rt: r2(x.rt), iamt: r2(x.iamt), camt: r2(x.camt), samt: r2(x.samt), csamt: r2(x.csamt) })) } : {})
+    ...(ecoma.length ? { ecoma } : {}),
+    ...amendmentPayload(data)
   };
 }
 
 export function buildFullGstr1Json(basePayload: Record<string, any>, data: Gstr1ExtendedData) {
+  // Never overwrite the existing invoice-derived GSTR-1 sections; only add populated extended sections.
   return { ...basePayload, ...buildExtendedGstr1Sections(data) };
 }
 
@@ -181,5 +272,8 @@ export function downloadFullGstr1Json(basePayload: Record<string, any>, data: Gs
   const a = document.createElement('a');
   a.href = url;
   a.download = `GSTR1_FULL_${seller.gstin || 'GSTIN'}_${period}.json`;
-  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
