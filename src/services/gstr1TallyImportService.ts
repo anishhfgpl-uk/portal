@@ -16,28 +16,44 @@ function monthRange(period: string) {
   return { from: `1-${names[mm - 1]}-${yyyy}`, to: `${last}-${names[mm - 1]}-${yyyy}` };
 }
 
-function dateRange(period: string) {
-  const { from, to } = monthRange(period);
-  const mm = Number(period.slice(0, 2));
-  const yyyy = Number(period.slice(2));
-  const last = new Date(yyyy, mm, 0).getDate();
-  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return Array.from({ length: last }, (_, i) => {
-    const day = i + 1;
-    return { from: `${day}-${names[mm - 1]}-${yyyy}`, to: `${day}-${names[mm - 1]}-${yyyy}` };
-  });
-}
-
-// Do NOT ask Tally for a whole month in one Voucher Register export. Large Voucher
-// Register XML responses can make TallyPrime appear frozen. We deliberately fetch one
-// day at a time, sequentially, so Tally gets a small request and can recover between days.
+// One lightweight collection request for the selected month. Do not use Voucher
+// Register or one-request-per-day: both make Tally build a report repeatedly and can
+// freeze large companies. Tally's collection API lets us fetch only the methods needed.
 function buildSalesRequest(from: string, to: string) {
-  return `<ENVELOPE>\n  <HEADER>\n    <VERSION>1</VERSION>\n    <TALLYREQUEST>Export</TALLYREQUEST>\n    <TYPE>Data</TYPE>\n    <ID>Voucher Register</ID>\n  </HEADER>\n  <BODY>\n    <DESC>\n      <STATICVARIABLES>\n        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n        <SVFROMDATE TYPE="Date">${from}</SVFROMDATE>\n        <SVTODATE TYPE="Date">${to}</SVTODATE>\n        <VOUCHERTYPENAME TYPE="String">Sales</VOUCHERTYPENAME>\n      </STATICVARIABLES>\n    </DESC>\n  </BODY>\n</ENVELOPE>`;
+  return `<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>GSTR1SalesVouchers</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        <SVFROMDATE TYPE="Date">${from}</SVFROMDATE>
+        <SVTODATE TYPE="Date">${to}</SVTODATE>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="GSTR1SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No">
+            <TYPE>Voucher</TYPE>
+            <FILTER>GSTR1IsSales</FILTER>
+            <FETCH>GUID, MASTERID, Date, VoucherNumber, VoucherTypeName, PartyLedgerName, PartyName, PartyGSTIN, GSTIN, PlaceOfSupply, StateName, BasicBuyerName, Amount, Narration, IsCancelled, IsOptional</FETCH>
+            <FETCH>AllInventoryEntries.StockItemName, AllInventoryEntries.BilledQty, AllInventoryEntries.ActualQty, AllInventoryEntries.Rate, AllInventoryEntries.Amount, AllInventoryEntries.HSNSACCode, AllInventoryEntries.HSNCODE, AllInventoryEntries.HSN, AllInventoryEntries.GSTOVRDIGSTRATE, AllInventoryEntries.GSTOVRCGSTRATE</FETCH>
+            <FETCH>LedgerEntries.LedgerName, LedgerEntries.Amount</FETCH>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="GSTR1IsSales" ISMODIFY="No" ISFIXED="No" ISINTERNAL="No">$$IsSales:$VoucherTypeName</SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`;
 }
 
 async function requestTally(xml: string, tallyUrl: string) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), 30000);
   try {
     const response = await fetch('/api/tally/request', {
       method: 'POST',
@@ -47,8 +63,7 @@ async function requestTally(xml: string, tallyUrl: string) {
     });
     const body = await response.json().catch(() => null);
     if (!response.ok || !body?.success) throw new Error(body?.error || `Tally request failed (${response.status})`);
-    if (!body.xml || !String(body.xml).trim()) return '';
-    return String(body.xml);
+    return body.xml ? String(body.xml) : '';
   } finally {
     window.clearTimeout(timeout);
   }
@@ -92,8 +107,7 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
     inventoryNodes.forEach((row, itemIndex) => {
       const name = nodeText(row, 'STOCKITEMNAME') || `Item ${itemIndex + 1}`;
       const qtyData = parseQty(nodeText(row, 'BILLEDQTY') || nodeText(row, 'ACTUALQTY'));
-      const rateRaw = nodeText(row, 'RATE');
-      const rate = money(rateRaw.split('/')[0]);
+      const rate = money(nodeText(row, 'RATE').split('/')[0]);
       const taxable = money(nodeText(row, 'AMOUNT')) || rate * qtyData.qty;
       const hsn = nodeText(row, 'HSNSACCODE') || nodeText(row, 'HSNCODE') || nodeText(row, 'HSN') || '';
       const explicitRate = Number((nodeText(row, 'GSTOVRDIGSTRATE') || nodeText(row, 'GSTOVRCGSTRATE') || '').replace(/[^0-9.]/g, '')) || 0;
@@ -142,29 +156,11 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
 }
 
 export async function importGstr1SalesFromTally(period: string, seller: SellerInfo, tallyUrl = 'http://127.0.0.1:9000'): Promise<Gstr1TallyImportResult> {
-  const chunks: string[] = [];
-  const days = dateRange(period);
-  let failedDays = 0;
+  const { from, to } = monthRange(period);
+  const xml = await requestTally(buildSalesRequest(from, to), tallyUrl);
+  if (!xml) throw new Error('Tally ne selected period ke liye koi Sales data return nahi kiya.');
 
-  // Sequential requests are intentional: never bombard Tally with parallel XML exports.
-  for (const day of days) {
-    try {
-      const xml = await requestTally(buildSalesRequest(day.from, day.to), tallyUrl);
-      if (xml) chunks.push(xml);
-    } catch (error: any) {
-      failedDays += 1;
-      // A single empty/failed day must not discard the other days. Abort only after
-      // repeated failures, which normally means Tally is unavailable rather than a
-      // genuinely empty day.
-      if (failedDays >= 3) throw error;
-    }
-  }
-
-  if (!chunks.length) {
-    throw new Error(`Tally se selected period ka data read nahi ho saka. ${failedDays ? `${failedDays} day requests failed.` : 'Koi Sales voucher nahi mila.'}`);
-  }
-
-  const parsed = chunks.flatMap(xml => parseInvoices(xml, seller));
+  const parsed = parseInvoices(xml, seller);
   const seen = new Set<string>();
   const invoices = parsed.filter(inv => {
     const key = `${inv.invoiceNo.trim().toLowerCase()}|${inv.invoiceDate}|${inv.tallyGuid || inv.tallyMasterId || ''}`;
@@ -172,6 +168,5 @@ export async function importGstr1SalesFromTally(period: string, seller: SellerIn
     seen.add(key);
     return true;
   });
-
   return { invoices, rawCount: parsed.length, period };
 }
