@@ -42,7 +42,11 @@ patch(reportPath, [
 patch(advancedPath, [
   [
     "import { buildGstr1JsonPayload } from '../services/gstr1Service';\n",
-    ""
+    "import { formatToGstPortalDate } from '../services/gstr1Service';\n"
+  ],
+  [
+    "const row = { inum:i.invoiceNo, idt:i.invoiceDate, val:i.grandTotal, pos, rchrg:'N', inv_typ:'R', itms:",
+    "const row = { inum:i.invoiceNo, idt:formatToGstPortalDate(i.invoiceDate), val:i.grandTotal, pos, rchrg:'N', inv_typ:'R', itms:"
   ],
   [
     "  const base = useMemo(() => buildGstr1JsonPayload({} as any), []);\n",
