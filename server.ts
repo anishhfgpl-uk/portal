@@ -21,9 +21,8 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Server-side proxy to Tally. GSTR-1 now sends small, one-day requests so this
-  // endpoint must allow enough time for a single Tally export but must still abort
-  // a genuinely stuck request instead of leaving Tally/Node waiting forever.
+  // Tally proxy. GSTR-1 uses one lightweight Collection request for the selected
+  // month instead of repeatedly exporting the heavy Voucher Register report.
   app.post("/api/tally/request", async (req, res) => {
     try {
       const tallyUrl = req.body.url || "http://127.0.0.1:9000";
@@ -34,7 +33,7 @@ async function startServer() {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
 
       try {
         const tallyResponse = await fetch(tallyUrl, {
@@ -58,7 +57,7 @@ async function startServer() {
         return res.status(502).json({
           success: false,
           error: isTimeout
-            ? `Connection to Tally at ${tallyUrl} timed out after 15s.`
+            ? `Connection to Tally at ${tallyUrl} timed out after 45s.`
             : `Failed to connect to Tally Prime at ${tallyUrl}: ${fetchErr.message}`,
           code: fetchErr.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
           details: {
