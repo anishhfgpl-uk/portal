@@ -8,7 +8,7 @@ const nodeText = (el: Element, name: string) => cleanText(el.getElementsByTagNam
 const attrOrNode = (el: Element, attr: string, node: string) => cleanText(el.getAttribute(attr) || nodeText(el, node));
 const money = (v: string) => Math.abs(Number(String(v || '').replace(/,/g, '')) || 0);
 
-function monthRange(period: string) {
+export function monthRange(period: string) {
   const mm = Number(period.slice(0, 2));
   const yyyy = Number(period.slice(2));
   const last = new Date(yyyy, mm, 0).getDate();
@@ -16,15 +16,15 @@ function monthRange(period: string) {
   return { from: `1-${names[mm - 1]}-${yyyy}`, to: `${last}-${names[mm - 1]}-${yyyy}` };
 }
 
-function repairXmlForParsing(xml: string) {
+export function repairXmlForParsing(xml: string) {
   return String(xml || '').replace(/^\uFEFF/, '').replace(/&(?!#(?:\d+|x[0-9a-fA-F]+);|[A-Za-z][A-Za-z0-9]+;)/g, '&amp;');
 }
 
-function buildSalesRequest(from: string, to: string) {
+export function buildSalesRequest(from: string, to: string) {
   return `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>GSTR1SalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVFROMDATE TYPE="Date">${from}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="GSTR1SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No"><TYPE>Voucher</TYPE><FILTER>GSTR1IsSales</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN,AllInventoryEntries.GSTOVRDIGSTRATE,AllInventoryEntries.GSTOVRCGSTRATE</FETCH><FETCH>LedgerEntries.LedgerName,LedgerEntries.Amount</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="GSTR1IsSales" ISMODIFY="No" ISFIXED="No" ISINTERNAL="No">$$IsSales:$VoucherTypeName</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 }
 
-async function requestTally(xml: string, tallyUrl: string) {
+export async function requestTally(xml: string, tallyUrl: string) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 30000);
   try {
@@ -48,7 +48,7 @@ function parseQty(raw: string) {
   return { qty: m ? Number(m[1].replace(/,/g,'')) || 1 : 1, unit: m?.[2]?.trim() || 'Nos' };
 }
 
-function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
+export function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
   const doc = new DOMParser().parseFromString(repairXmlForParsing(xml), 'text/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error(`Tally XML response valid nahi hai. Tally response: ${cleanText(xml.slice(0,500)) || 'empty response'}`);
   const invoices: Invoice[] = [];
