@@ -16,43 +16,42 @@ function monthRange(period: string) {
   return { from: `1-${names[mm - 1]}-${yyyy}`, to: `${last}-${names[mm - 1]}-${yyyy}` };
 }
 
-// Deliberately uses the current/open Tally company. We do not send the portal company name
-// because a portal display name can differ from Tally's exact company name.
-function buildSalesRequest(period: string) {
+function dateRange(period: string) {
   const { from, to } = monthRange(period);
-  return `<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>Export</TALLYREQUEST>
-    <TYPE>Data</TYPE>
-    <ID>Voucher Register</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        <SVFROMDATE TYPE="Date">${from}</SVFROMDATE>
-        <SVTODATE TYPE="Date">${to}</SVTODATE>
-        <VOUCHERTYPENAME TYPE="String">Sales</VOUCHERTYPENAME>
-      </STATICVARIABLES>
-    </DESC>
-  </BODY>
-</ENVELOPE>`;
+  const mm = Number(period.slice(0, 2));
+  const yyyy = Number(period.slice(2));
+  const last = new Date(yyyy, mm, 0).getDate();
+  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return Array.from({ length: last }, (_, i) => {
+    const day = i + 1;
+    return { from: `${day}-${names[mm - 1]}-${yyyy}`, to: `${day}-${names[mm - 1]}-${yyyy}` };
+  });
+}
+
+// Do NOT ask Tally for a whole month in one Voucher Register export. Large Voucher
+// Register XML responses can make TallyPrime appear frozen. We deliberately fetch one
+// day at a time, sequentially, so Tally gets a small request and can recover between days.
+function buildSalesRequest(from: string, to: string) {
+  return `<ENVELOPE>\n  <HEADER>\n    <VERSION>1</VERSION>\n    <TALLYREQUEST>Export</TALLYREQUEST>\n    <TYPE>Data</TYPE>\n    <ID>Voucher Register</ID>\n  </HEADER>\n  <BODY>\n    <DESC>\n      <STATICVARIABLES>\n        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n        <SVFROMDATE TYPE="Date">${from}</SVFROMDATE>\n        <SVTODATE TYPE="Date">${to}</SVTODATE>\n        <VOUCHERTYPENAME TYPE="String">Sales</VOUCHERTYPENAME>\n      </STATICVARIABLES>\n    </DESC>\n  </BODY>\n</ENVELOPE>`;
 }
 
 async function requestTally(xml: string, tallyUrl: string) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 9000);
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch('/api/tally/request', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: tallyUrl || 'http://127.0.0.1:9000', xml }), signal: controller.signal,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: tallyUrl || 'http://127.0.0.1:9000', xml }),
+      signal: controller.signal,
     });
     const body = await response.json().catch(() => null);
     if (!response.ok || !body?.success) throw new Error(body?.error || `Tally request failed (${response.status})`);
-    if (!body.xml || !String(body.xml).trim()) throw new Error('Tally ne koi sales data return nahi kiya.');
+    if (!body.xml || !String(body.xml).trim()) return '';
     return String(body.xml);
-  } finally { window.clearTimeout(timeout); }
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function parseDate(raw: string) {
@@ -142,9 +141,37 @@ function parseInvoices(xml: string, seller: SellerInfo): Invoice[] {
   return invoices;
 }
 
-export async function importGstr1SalesFromTally(period: string, _seller: SellerInfo, tallyUrl = 'http://127.0.0.1:9000'): Promise<Gstr1TallyImportResult> {
-  const xml = await requestTally(buildSalesRequest(period), tallyUrl);
-  const invoices = parseInvoices(xml, _seller);
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  return { invoices, rawCount:Array.from(doc.getElementsByTagName('VOUCHER')).length, period };
+export async function importGstr1SalesFromTally(period: string, seller: SellerInfo, tallyUrl = 'http://127.0.0.1:9000'): Promise<Gstr1TallyImportResult> {
+  const chunks: string[] = [];
+  const days = dateRange(period);
+  let failedDays = 0;
+
+  // Sequential requests are intentional: never bombard Tally with parallel XML exports.
+  for (const day of days) {
+    try {
+      const xml = await requestTally(buildSalesRequest(day.from, day.to), tallyUrl);
+      if (xml) chunks.push(xml);
+    } catch (error: any) {
+      failedDays += 1;
+      // A single empty/failed day must not discard the other days. Abort only after
+      // repeated failures, which normally means Tally is unavailable rather than a
+      // genuinely empty day.
+      if (failedDays >= 3) throw error;
+    }
+  }
+
+  if (!chunks.length) {
+    throw new Error(`Tally se selected period ka data read nahi ho saka. ${failedDays ? `${failedDays} day requests failed.` : 'Koi Sales voucher nahi mila.'}`);
+  }
+
+  const parsed = chunks.flatMap(xml => parseInvoices(xml, seller));
+  const seen = new Set<string>();
+  const invoices = parsed.filter(inv => {
+    const key = `${inv.invoiceNo.trim().toLowerCase()}|${inv.invoiceDate}|${inv.tallyGuid || inv.tallyMasterId || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { invoices, rawCount: parsed.length, period };
 }
