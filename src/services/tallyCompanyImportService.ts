@@ -35,8 +35,7 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   const out: SellerInfo[] = [];
   const seen = new Set<string>();
   candidates.forEach((comp, index) => {
-    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY') ||
-      clean(comp.getAttribute('NAME') || '');
+    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY') || clean(comp.getAttribute('NAME') || '');
     if (!name || seen.has(name.toLowerCase())) return;
     seen.add(name.toLowerCase());
 
@@ -46,19 +45,9 @@ function parseCompanyXml(xml: string): SellerInfo[] {
     const address = addressLines.join(', ') || value(comp, 'MAILINGADDRESS', 'COMPANYADDRESS', 'ADDRESS');
     const state = value(comp, 'STATENAME', 'STATE', 'MAILINGSTATE');
     const country = value(comp, 'COUNTRYNAME', 'COUNTRY') || 'India';
-    const gstin = value(
-      comp,
-      'GSTIN',
-      'GSTREGNUMBER',
-      'GSTREGISTRATIONNUMBER',
-      'GSTREGISTRATIONNO',
-      'PARTYGSTIN',
-      'CMPGSTAXNUMBER',
-      'VATREGISTRATIONNO'
-    ).toUpperCase();
+    const gstin = value(comp, 'GSTIN', 'GSTREGNUMBER', 'GSTREGISTRATIONNUMBER', 'GSTREGISTRATIONNO', 'PARTYGSTIN', 'CMPGSTAXNUMBER', 'VATREGISTRATIONNO').toUpperCase();
     const stateCode = extractStateCodeFromGstin(gstin) || getStateCodeByName(state) || '';
-    const pan = value(comp, 'PANNUMBER', 'INCOMETAXNUMBER', 'PAN').toUpperCase() ||
-      (gstin ? extractPanFromGstin(gstin) : '');
+    const pan = value(comp, 'PANNUMBER', 'INCOMETAXNUMBER', 'PAN').toUpperCase() || (gstin ? extractPanFromGstin(gstin) : '');
     const pincode = value(comp, 'PINCODE', 'PINCODE1') || (address.match(/\b\d{6}\b/)?.[0] || '');
     const mobile = value(comp, 'MOBILENUMBER', 'MOBILE', 'MOBILEPHONE', 'MOBILEPHONE1');
     const phone = value(comp, 'PHONENUMBER', 'TELEPHONENUMBER', 'PHONE', 'TELEPHONE') || mobile;
@@ -99,28 +88,19 @@ function parseCompanyXml(xml: string): SellerInfo[] {
         id: `comp-tally-current-${Date.now()}`,
         name: current,
         mailingName: current,
-        address: '',
-        state: '',
-        stateCode: '',
-        country: 'India',
-        phone: '',
-        mobile: '',
-        email: '',
-        website: '',
-        gstin: '',
-        pan: '',
-        isDefault: true,
+        address: '', state: '', stateCode: '', country: 'India',
+        phone: '', mobile: '', email: '', website: '', gstin: '', pan: '', isDefault: true,
       });
     }
   }
   return out;
 }
 
-// Fetch the actual Company object from the currently open TallyPrime company.
-// The old CompanyInfo OBJECT request only returned the current-company name on
-// some TallyPrime builds, so profile fields such as GSTIN/address/mobile were
-// missing. This collection explicitly asks Tally for the Company native fields.
-const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyProfile</ID></HEADER><BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY TYPE="String">##SVCURRENTCOMPANY</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="CurrentCompanyProfile" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No"><TYPE>Company</TYPE><NATIVEMETHOD>*</NATIVEMETHOD><FILTERS>IsCurrentCompany</FILTERS></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsCurrentCompany">$$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+// TallyPrime's Company collection uses the singular FILTER element. The previous
+// request used FILTERS, which can return an empty collection on TallyPrime even
+// though the HTTP connection itself succeeds. We also request native Company
+// methods so GSTIN/address/mobile/etc. are returned from the open company.
+const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyProfile</ID></HEADER><BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="CurrentCompanyProfile" ISMODIFY="No"><TYPE>Company</TYPE><NATIVEMETHOD>*</NATIVEMETHOD><FILTER>IsCurrentCompany</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsCurrentCompany">$$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
 export { DEFAULT_TALLY_CONFIG };
 
