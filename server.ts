@@ -21,14 +21,15 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Tally proxy. GSTR-1 uses one lightweight Collection request for the selected
-  // month instead of repeatedly exporting the heavy Voucher Register report.
-  app.post("/api/tally/request", async (req, res) => {
+  // Tally proxy handler. Keep both /api and /app/api aliases because the portal
+  // can be exposed at the domain root or mounted under /app by Cloudflare.
+  const tallyRequestHandler = async (req: express.Request, res: express.Response) => {
     try {
-      const tallyUrl = req.body.url || "http://127.0.0.1:9000";
-      const xmlBody = typeof req.body === "string" ? req.body : req.body.xml;
+      const body: any = req.body || {};
+      const tallyUrl = body.url || "http://127.0.0.1:9000";
+      const xmlBody = typeof body === "string" ? body : body.xml;
 
-      if (!xmlBody || !xmlBody.trim()) {
+      if (!xmlBody || !String(xmlBody).trim()) {
         return res.status(400).json({ success: false, error: "No XML body provided in request" });
       }
 
@@ -39,7 +40,7 @@ async function startServer() {
         const tallyResponse = await fetch(tallyUrl, {
           method: "POST",
           headers: { "Content-Type": "text/xml;charset=UTF-8" },
-          body: xmlBody,
+          body: String(xmlBody),
           signal: controller.signal,
         });
 
@@ -53,26 +54,26 @@ async function startServer() {
         });
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
-        const isTimeout = fetchErr.name === "AbortError";
+        const isTimeout = fetchErr?.name === "AbortError";
         return res.status(502).json({
           success: false,
           error: isTimeout
             ? `Connection to Tally at ${tallyUrl} timed out after 45s.`
-            : `Failed to connect to Tally Prime at ${tallyUrl}: ${fetchErr.message}`,
-          code: fetchErr.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
-          details: {
-            targetUrl: tallyUrl,
-            suggestion: "Check that Tally Prime is running, HTTP Server is enabled on port 9000, and a company is open.",
-          },
+            : `Failed to connect to Tally Prime at ${tallyUrl}: ${fetchErr?.message || "network error"}`,
+          code: fetchErr?.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
+          details: { targetUrl: tallyUrl },
         });
       }
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message || "Internal server error during Tally request proxy" });
+      return res.status(500).json({ success: false, error: err?.message || "Internal server error during Tally request proxy" });
     }
-  });
+  };
 
-  app.post("/api/tally/test", async (req, res) => {
-    const tallyUrl = req.body.url || "http://127.0.0.1:9000";
+  app.post("/api/tally/request", tallyRequestHandler);
+  app.post("/app/api/tally/request", tallyRequestHandler);
+
+  const tallyTestHandler = async (req: express.Request, res: express.Response) => {
+    const tallyUrl = (req.body || {}).url || "http://127.0.0.1:9000";
     const testXml = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>`;
 
     try {
@@ -88,9 +89,12 @@ async function startServer() {
       const text = await response.text();
       return res.json({ online: true, status: response.status, url: tallyUrl, xmlSample: text.substring(0, 300) });
     } catch (error: any) {
-      return res.json({ online: false, url: tallyUrl, error: error.message, suggestion: "Ensure Tally Prime is open with F1 > Settings > Connectivity > HTTP Server enabled on Port 9000." });
+      return res.json({ online: false, url: tallyUrl, error: error?.message, suggestion: "Ensure Tally Prime is running and HTTP Server is enabled on Port 9000." });
     }
-  });
+  };
+
+  app.post("/api/tally/test", tallyTestHandler);
+  app.post("/app/api/tally/test", tallyTestHandler);
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
@@ -101,7 +105,7 @@ async function startServer() {
     app.get("/", (_req, res) => res.redirect(302, "/portal/"));
     app.use((req, res, next) => {
       if (req.method !== "GET" && req.method !== "HEAD") return next();
-      if (!req.path.startsWith("/portal")) return next();
+      if (!req.path.startsWith("/portal") && !req.path.startsWith("/app")) return next();
       if (path.extname(req.path)) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });
