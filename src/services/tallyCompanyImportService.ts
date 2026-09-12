@@ -90,13 +90,8 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   return out;
 }
 
-// Step 1: Tally's documented CompanyInfo request identifies the currently loaded company.
-// It is intentionally kept small; CompanyInfo is not a full Company master export.
 const CURRENT_COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><OBJECT NAME="CurrentCompany"><LOCALFORMULA>CurrentCompany:##SVCURRENTCOMPANY</LOCALFORMULA></OBJECT><COLLECTION NAME="CompanyInfo"><OBJECTS>CurrentCompany</OBJECTS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
-// Step 2: once we know the exact open company name, ask Tally for the actual Company object.
-// This avoids relying on arbitrary LOCALFORMULA field names, which was the failure in the
-// previous implementation. FETCH * lets TallyPrime return the fields supported by its version.
 const COMPANY_OBJECT_XML = (companyName: string) => {
   const escaped = companyName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Object</TYPE><SUBTYPE>Company</SUBTYPE><ID TYPE="Name">${escaped}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>${escaped}</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><FETCHLIST><FETCH>*</FETCH></FETCHLIST></DESC></BODY></ENVELOPE>`;
@@ -116,17 +111,42 @@ function currentCompanyName(xml: string): string {
   return '';
 }
 
+function companyProxyPath(): string {
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/app')) {
+    return '/app/api/tally/request';
+  }
+  return '/api/tally/request';
+}
+
+async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ text: string; via: 'proxy' | 'direct' }> {
+  // Company Import must use the portal backend. When the portal is mounted at
+  // /app, the old /api URL hits the website/tunnel instead of the portal server.
+  // Calling /app/api keeps the request on the same portal origin and avoids CORS.
+  if (config.proxyMode !== false) {
+    const response = await fetch(companyProxyPath(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: config.tallyUrl || 'http://127.0.0.1:9000', xml }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.ok && payload?.success && typeof payload.xml === 'string' && payload.xml.trim()) {
+      return { text: payload.xml, via: 'proxy' };
+    }
+    if (payload?.error) throw new Error(payload.error);
+    throw new Error(`Portal Tally proxy unavailable (HTTP ${response.status}).`);
+  }
+  return sendTallyRequest(xml, config);
+}
+
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  // 1) Identify the company actually open in TallyPrime.
-  const current = await sendTallyRequest(CURRENT_COMPANY_XML, config);
+  const current = await requestCompanyTally(CURRENT_COMPANY_XML, config);
   const openName = currentCompanyName(current.text);
 
   if (openName) {
-    // 2) Fetch the complete Company master for that exact company.
     try {
-      const detail = await sendTallyRequest(COMPANY_OBJECT_XML(openName), config);
+      const detail = await requestCompanyTally(COMPANY_OBJECT_XML(openName), config);
       const companies = parseCompanyXml(detail.text);
       if (companies.length) return companies;
     } catch (err) {
@@ -134,10 +154,8 @@ export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALL
     }
   }
 
-  // 3) Safe fallback for Tally builds that reject Object/Company. This still returns
-  // company records instead of falsely claiming that Tally is disconnected.
   try {
-    const fallback = await sendTallyRequest(COMPANY_XML_FALLBACK, config);
+    const fallback = await requestCompanyTally(COMPANY_XML_FALLBACK, config);
     const companies = parseCompanyXml(fallback.text);
     if (companies.length) {
       if (openName) {
