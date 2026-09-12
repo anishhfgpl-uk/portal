@@ -27,6 +27,7 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   const candidates: Element[] = [];
   Array.from(doc.getElementsByTagName('COMPANY')).forEach(x => candidates.push(x));
   Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(x => candidates.push(x));
+  Array.from(doc.getElementsByTagName('CURRENT_COMPANY')).forEach(x => candidates.push(x));
   Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => {
     const company = x.getElementsByTagName('COMPANY')[0];
     if (company) candidates.push(company);
@@ -81,37 +82,40 @@ function parseCompanyXml(xml: string): SellerInfo[] {
     });
   });
 
-  if (!out.length) {
-    const current = clean(doc.getElementsByTagName('SVCURRENTCOMPANY')[0]?.textContent || '');
-    if (current) {
-      out.push({
-        id: `comp-tally-current-${Date.now()}`,
-        name: current,
-        mailingName: current,
-        address: '', state: '', stateCode: '', country: 'India',
-        phone: '', mobile: '', email: '', website: '', gstin: '', pan: '', isDefault: true,
-      });
-    }
-  }
   return out;
 }
 
-// TallyPrime's standard "List of Companies" collection is more reliable than
-// a custom Company object/filter query across TallyPrime releases. NATIVEMETHOD *
-// asks Tally for the complete Company master, including GST/address/contact fields.
-// SVCURRENTCOMPANY is retained so the request is scoped to the open company where
-// the Tally build supports that variable.
-const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVIsSimpleCompany>No</SVIsSimpleCompany><SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No" NAME="List of Companies"><TYPE>Company</TYPE><NATIVEMETHOD>*</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+// Tally's CompanyInfo pattern reliably identifies the OPEN company.  We explicitly
+// expose the company object's native fields through local formulas so this works
+// even when a TallyPrime release does not return COMPANY records from a generic
+// Company collection. This is the important difference from the previous query.
+const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><OBJECT NAME="CurrentCompany"><LOCALFORMULA>CompanyName:$Name</LOCALFORMULA><LOCALFORMULA>MailingName:$MailingName</LOCALFORMULA><LOCALFORMULA>FormalName:$BasicCompanyFormalName</LOCALFORMULA><LOCALFORMULA>Address:$Address</LOCALFORMULA><LOCALFORMULA>State:$StateName</LOCALFORMULA><LOCALFORMULA>Country:$CountryName</LOCALFORMULA><LOCALFORMULA>PIN:$PinCode</LOCALFORMULA><LOCALFORMULA>Phone:$PhoneNumber</LOCALFORMULA><LOCALFORMULA>Mobile:$MobileNumber</LOCALFORMULA><LOCALFORMULA>Email:$Email</LOCALFORMULA><LOCALFORMULA>Website:$Website</LOCALFORMULA><LOCALFORMULA>GSTIN:$GSTIN</LOCALFORMULA><LOCALFORMULA>PartyGSTIN:$PartyGSTIN</LOCALFORMULA><LOCALFORMULA>PAN:$PANNumber</LOCALFORMULA><LOCALFORMULA>IncomeTaxNumber:$IncomeTaxNumber</LOCALFORMULA><LOCALFORMULA>StartingFrom:$StartingFrom</LOCALFORMULA><LOCALFORMULA>BooksFrom:$BooksFrom</LOCALFORMULA><LOCALFORMULA>CurrencySymbol:$CurrencySymbol</LOCALFORMULA><LOCALFORMULA>CurrencyFormalName:$CurrencyFormalName</LOCALFORMULA><LOCALFORMULA>GUID:$GUID</LOCALFORMULA></OBJECT><COLLECTION NAME="CompanyInfo"><OBJECTS>CurrentCompany</OBJECTS><NATIVEMETHOD>*</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+
+const COMPANY_XML_FALLBACK = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVIsSimpleCompany>No</SVIsSimpleCompany><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No" NAME="List of Companies"><TYPE>Company</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>StartingFrom</NATIVEMETHOD><NATIVEMETHOD>BooksFrom</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  const result = await sendTallyRequest(COMPANY_XML, config);
-  const companies = parseCompanyXml(result.text);
-  if (!companies.length) {
-    throw new Error('Tally connected hai, lekin Company master response nahi mila. TallyPrime me company open rakhein.');
+  // 1) Current/open company: this is the primary path.
+  try {
+    const result = await sendTallyRequest(COMPANY_XML, config);
+    const companies = parseCompanyXml(result.text);
+    if (companies.length > 0) return companies;
+  } catch (err) {
+    console.warn('Current CompanyInfo query failed; trying List of Companies fallback:', err);
   }
-  return companies;
+
+  // 2) Safe fallback: at least get the company name and dates instead of showing
+  // the misleading "current company response not found" message.
+  try {
+    const result = await sendTallyRequest(COMPANY_XML_FALLBACK, config);
+    const companies = parseCompanyXml(result.text);
+    if (companies.length > 0) return companies;
+  } catch (err) {
+    console.warn('List of Companies fallback failed:', err);
+  }
+
+  throw new Error('Tally connected hai, lekin current company master data Tally ne return nahi kiya.');
 }
 
 export function parseCompaniesXML(xml: string): SellerInfo[] {
