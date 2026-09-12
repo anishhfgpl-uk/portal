@@ -96,11 +96,12 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   return out;
 }
 
-// TallyPrime's Company collection uses the singular FILTER element. The previous
-// request used FILTERS, which can return an empty collection on TallyPrime even
-// though the HTTP connection itself succeeds. We also request native Company
-// methods so GSTIN/address/mobile/etc. are returned from the open company.
-const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyProfile</ID></HEADER><BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="CurrentCompanyProfile" ISMODIFY="No"><TYPE>Company</TYPE><NATIVEMETHOD>*</NATIVEMETHOD><FILTER>IsCurrentCompany</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsCurrentCompany">$$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+// TallyPrime's standard "List of Companies" collection is more reliable than
+// a custom Company object/filter query across TallyPrime releases. NATIVEMETHOD *
+// asks Tally for the complete Company master, including GST/address/contact fields.
+// SVCURRENTCOMPANY is retained so the request is scoped to the open company where
+// the Tally build supports that variable.
+const COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVIsSimpleCompany>No</SVIsSimpleCompany><SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No" NAME="List of Companies"><TYPE>Company</TYPE><NATIVEMETHOD>*</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
 export { DEFAULT_TALLY_CONFIG };
 
@@ -108,7 +109,7 @@ export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALL
   const result = await sendTallyRequest(COMPANY_XML, config);
   const companies = parseCompanyXml(result.text);
   if (!companies.length) {
-    throw new Error('Tally connected hai, lekin current company profile response nahi mila. TallyPrime me company open rakhein.');
+    throw new Error('Tally connected hai, lekin Company master response nahi mila. TallyPrime me company open rakhein.');
   }
   return companies;
 }
