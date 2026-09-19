@@ -17,15 +17,33 @@ async function startServer() {
   app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
   const tallyProxy = async (req: any, res: any) => {
     try {
-      const tallyUrl = req.body?.url || "http://127.0.0.1:9000";
+      const localTallyUrl = req.body?.url || "http://127.0.0.1:9000";
       const xmlBody = typeof req.body === "string" ? req.body : req.body?.xml;
       if (!xmlBody || !xmlBody.trim()) return res.status(400).json({ success: false, error: "No XML body provided in request" });
+
+      // Hosted production portal -> secure office bridge -> TallyPrime localhost.
+      const bridgeUrl = (process.env.TALLY_BRIDGE_URL || "").replace(/\/$/, "");
+      const bridgeToken = process.env.TALLY_BRIDGE_TOKEN || "";
+      const targetUrl = bridgeUrl ? `${bridgeUrl}/tally` : localTallyUrl;
+      const headers: Record<string, string> = { "Content-Type": "text/xml;charset=UTF-8" };
+      if (bridgeToken) headers["X-Bridge-Token"] = bridgeToken;
+
       const controller = new AbortController(); const timeoutId = setTimeout(() => controller.abort(), 45000);
       try {
-        const tallyResponse = await fetch(tallyUrl, { method: "POST", headers: { "Content-Type": "text/xml;charset=UTF-8" }, body: xmlBody, signal: controller.signal });
+        const tallyResponse = await fetch(targetUrl, { method: "POST", headers, body: xmlBody, signal: controller.signal });
         clearTimeout(timeoutId);
-        return res.status(200).json({ success: true, status: tallyResponse.status, xml: await tallyResponse.text() });
-      } catch (fetchErr: any) {
+        const responseText = await tallyResponse.text();
+
+        if (bridgeUrl) {
+          let bridgePayload: any = null;
+          try { bridgePayload = JSON.parse(responseText); } catch {}
+          if (!tallyResponse.ok || !bridgePayload?.ok) {
+            return res.status(502).json({ success: false, error: bridgePayload?.error || `Office Tally connector returned HTTP ${tallyResponse.status}` });
+          }
+          return res.status(200).json({ success: true, status: bridgePayload.tallyStatus || tallyResponse.status, xml: bridgePayload.xml || "" });
+        }
+
+        return res.status(200).json({ success: true, status: tallyResponse.status, xml: responseText });      } catch (fetchErr: any) {
         clearTimeout(timeoutId); const isTimeout = fetchErr.name === "AbortError";
         return res.status(502).json({ success: false, error: isTimeout ? `Connection to Tally at ${tallyUrl} timed out after 45s.` : `Failed to connect to Tally Prime at ${tallyUrl}: ${fetchErr.message}`, code: fetchErr.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED") });
       }
