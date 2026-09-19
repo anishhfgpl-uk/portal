@@ -90,6 +90,8 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   return out;
 }
 
+const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyMaster</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="CurrentCompanyMaster" ISMODIFY="No"><TYPE>Company</TYPE><FETCH>NAME,MAILINGNAME,BASICCOMPANYFORMALNAME,ADDRESS,STATENAME,COUNTRYNAME,PINCODE,PHONENUMBER,MOBILENUMBER,TELEPHONENUMBER,EMAIL,EMAILID,WEBSITE,GSTIN,PARTYGSTIN,VATREGISTRATIONNO,PANNUMBER,INCOMETAXNUMBER,STARTINGFROM,BOOKSFROM,CURRENCYSYMBOL,CURRENCYFORMALNAME,BANKNAME,BANKACCOUNTNUMBER,IFSCODE,GUID</FETCH><FILTER>IsCurrentCompany</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsCurrentCompany">$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+
 const CURRENT_COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><OBJECT NAME="CurrentCompany"><LOCALFORMULA>CurrentCompany:##SVCURRENTCOMPANY</LOCALFORMULA></OBJECT><COLLECTION NAME="CompanyInfo"><OBJECTS>CurrentCompany</OBJECTS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
 const COMPANY_OBJECT_XML = (companyName: string) => {
@@ -141,19 +143,32 @@ async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ 
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  const current = await requestCompanyTally(CURRENT_COMPANY_XML, config);
-  const openName = currentCompanyName(current.text);
+  // Primary path: ask Tally for the Company master whose Name equals the
+  // company currently open in Tally. This avoids the fragile two-request
+  // "discover name -> Object export" flow.
+  try {
+    const master = await requestCompanyTally(CURRENT_COMPANY_MASTER_XML, config);
+    const companies = parseCompanyXml(master.text);
+    if (companies.length) return companies;
+  } catch (err) {
+    console.warn('Current company master query failed:', err);
+  }
 
-  if (openName) {
-    try {
+  // Fallback: identify the open company and then request its Company object.
+  let openName = '';
+  try {
+    const current = await requestCompanyTally(CURRENT_COMPANY_XML, config);
+    openName = currentCompanyName(current.text);
+    if (openName) {
       const detail = await requestCompanyTally(COMPANY_OBJECT_XML(openName), config);
       const companies = parseCompanyXml(detail.text);
       if (companies.length) return companies;
-    } catch (err) {
-      console.warn('Company object export failed:', err);
     }
+  } catch (err) {
+    console.warn('Current company object fallback failed:', err);
   }
 
+  // Final fallback for Tally builds that reject Object/Company.
   try {
     const fallback = await requestCompanyTally(COMPANY_XML_FALLBACK, config);
     const companies = parseCompanyXml(fallback.text);
