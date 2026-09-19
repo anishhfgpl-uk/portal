@@ -1,4 +1,25 @@
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
+
+// Load connector settings from the local .env file before reading process.env.
+// This keeps the office bridge authenticated even when started by Task Scheduler.
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envText = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
+  for (const line of envText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[key]) process.env[key] = value;
+  }
+}
 
 const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
@@ -42,7 +63,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
 
   if (req.method === 'GET' && req.url === '/health') {
-    return send(res, 200, { ok: true, service: 'tally-bridge', tallyUrl: TALLY_URL });
+    return send(res, 200, {
+      ok: true,
+      service: 'tally-bridge',
+      tallyUrl: TALLY_URL,
+      auth: Boolean(BRIDGE_TOKEN)
+    });
   }
 
   if (req.method !== 'POST' || req.url !== '/tally') {
