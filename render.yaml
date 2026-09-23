@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: anish-tally-portal
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TALLY_BRIDGE_URL
+        value: https://tally-bridge.anish-tech.online
+      - key: TALLY_BRIDGE_TOKEN
+        sync: false
