@@ -309,6 +309,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
+              <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 space-y-3">
+                <div className="flex items-start gap-3">
+                  <Server className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-800">Office Tally Connector</div>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      Install this once on the office Windows PC. It keeps the local TallyPrime
+                      connection and Cloudflare tunnel running in the background.
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href="/portal/Anish-Tally-Connector-Installer.ps1"
+                  download="Anish-Tally-Connector-Installer.ps1"
+                  className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition"
+                >
+                  Download Office Connector
+                </a>
+                <p className="text-[10px] text-slate-500">
+                  Windows PC par PowerShell ko Administrator ke roop mein chala kar installer run karein.
+                  TallyPrime mein HTTP/XML server port 9000 enabled hona chahiye.
+                </p>
+              </div>
+
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex items-center space-x-2">
                 <input
                   type="checkbox"
