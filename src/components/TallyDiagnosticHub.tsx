@@ -33,7 +33,7 @@ export const TallyDiagnosticHub: React.FC<TallyDiagnosticHubProps> = ({
   onTestConnection,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'solutions' | 'checklist' | 'console' | 'scripts'>('solutions');
-  const [customUrl, setCustomUrl] = useState<string>(config.tallyUrl || 'http://localhost:9000');
+  const [customUrl, setCustomUrl] = useState<string>(config.tallyUrl || 'https://tally-bridge.anish-tech.online');
   const [proxyMode, setProxyMode] = useState<boolean>(config.proxyMode !== false);
 
   // XML Console State
@@ -87,8 +87,9 @@ export const TallyDiagnosticHub: React.FC<TallyDiagnosticHubProps> = ({
     setTimeout(() => setCopiedScript(null), 2500);
   };
 
-  const nodeBridgeScript = `// tally-cors-bridge.js
-// Run: node tally-cors-bridge.js
+  const nodeBridgeScript = `// Legacy local CORS bridge is intentionally disabled.
+
+// Use the secure Office Connector installer instead.
 const http = require('http');
 
 const PORT = 9001;
@@ -130,11 +131,15 @@ server.listen(PORT, () => {
 });`;
 
   const windowsBatScript = `@echo off
-title Tally Prime CORS Bridge (Port 9001)
-echo Starting Tally Prime CORS Bridge...
-echo Browser se connect karne ke liye ready ho raha hai...
+title Anish Tally Office Connector
 echo.
-npx -y local-cors-proxy --proxyUrl http://localhost:9000 --port 9001 --proxyPartial ""
+echo The old local CORS bridge on port 9001 is no longer required.
+echo.
+echo Please use the secure Office Connector installer from the portal:
+echo /portal/Anish-Tally-Connector-Installer.ps1
+echo.
+echo It connects this office Tally Prime to the hosted portal through
+echo the Cloudflare office bridge.
 pause`;
 
   const downloadBatFile = () => {
@@ -215,7 +220,7 @@ pause`;
               type="text"
               value={customUrl}
               onChange={(e) => setCustomUrl(e.target.value)}
-              placeholder="http://localhost:9000 or http://127.0.0.1:9000"
+              placeholder="https://tally-bridge.anish-tech.online"
               className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3.5 py-2 text-xs font-mono font-semibold text-slate-800 focus:bg-white focus:border-blue-500 outline-none"
             />
           </div>
