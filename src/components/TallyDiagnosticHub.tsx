@@ -148,48 +148,12 @@ pause`;
   };
 
   const downloadOfficeConnector = () => {
-    const installer = `# Anish Technologies - Tally Office Connector
-# Run PowerShell as Administrator on the OFFICE PC where Tally Prime is running.
-# This connector keeps Tally 127.0.0.1:9000 reachable through the secure
-# Cloudflare hostname used by the portal.
-
-$ErrorActionPreference = 'Stop'
-$Cloudflared = "$env:ProgramFiles\\cloudflared\\cloudflared.exe"
-$InstallDir = "$env:ProgramFiles\\cloudflared"
-
-Write-Host "=== Anish Tally Office Connector ===" -ForegroundColor Cyan
-Write-Host "Tally target: http://127.0.0.1:9000"
-Write-Host "Bridge hostname: tally-bridge.anish-tech.online"
-Write-Host ""
-
-if (-not (Test-Path $Cloudflared)) {
-  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  $tmp = Join-Path $env:TEMP "cloudflared.exe"
-  Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $tmp
-  Move-Item -Force $tmp $Cloudflared
-}
-
-Write-Host "Enter the Cloudflare Tunnel token for tally-bridge.anish-tech.online:" -ForegroundColor Yellow
-$Token = Read-Host "Tunnel token"
-if ([string]::IsNullOrWhiteSpace($Token)) { throw "Tunnel token is required." }
-
-& $Cloudflared service uninstall 2>$null
-& $Cloudflared service install $Token
-Start-Service cloudflared
-Write-Host ""
-Write-Host "Connector installed and started." -ForegroundColor Green
-Write-Host "Keep Tally Prime HTTP Server enabled on port 9000."
-Write-Host "The portal will use https://tally-bridge.anish-tech.online"
-Write-Host ""
-Read-Host "Press Enter to close"
-`;
-    const blob = new Blob([installer], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Anish-Tally-Office-Connector.ps1';
+    a.href = '/portal/Anish-Tally-Connector-Installer.ps1';
+    a.download = 'Anish-Tally-Connector-Installer.ps1';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
   };
 
   return (
