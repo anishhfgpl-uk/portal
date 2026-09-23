@@ -126,7 +126,6 @@ const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
   <BODY>
     <DESC>
       <STATICVARIABLES>
-        <SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY>
         <SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT>
       </STATICVARIABLES>
       <TDL>
@@ -150,7 +149,31 @@ const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
   </BODY>
 </ENVELOPE>`;
 
-const CURRENT_COMPANY_XML = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><OBJECT NAME="CurrentCompany"><LOCALFORMULA>CurrentCompany:##SVCURRENTCOMPANY</LOCALFORMULA></OBJECT><COLLECTION NAME="CompanyInfo"><OBJECTS>CurrentCompany</OBJECTS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+const CURRENT_COMPANY_XML = `<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>CurrentCompanyName</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="CurrentCompanyName" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes">
+            <TYPE>Company</TYPE>
+            <FETCH>NAME</FETCH>
+            <FILTER>CurrentCompanyFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCurrentCompany</SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`;
 
 const COMPANY_OBJECT_XML = (companyName: string) => {
   const escaped = companyName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
