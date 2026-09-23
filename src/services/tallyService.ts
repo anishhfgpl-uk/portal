@@ -384,7 +384,13 @@ export async function sendTallyRequest(
     }
   }
 
-  // In proxy mode the browser must never bypass the hosted backend.\n  if (config.proxyMode !== false) {\n    throw new Error('Hosted Tally proxy request failed; direct browser fallback is disabled.');\n  }\n\n  // Direct browser fetch is allowed only when proxy mode is explicitly disabled.\n  try {
+  // In proxy mode the browser must never bypass the hosted backend.
+  if (config.proxyMode !== false) {
+    throw new Error('Hosted Tally proxy request failed; direct browser fallback is disabled.');
+  }
+
+  // Direct browser fetch is allowed only when proxy mode is explicitly disabled.
+  try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
 
