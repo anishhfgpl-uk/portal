@@ -35,12 +35,10 @@ ALLOW_ORIGIN=https://anish-tech.online
 "@
 Set-Content -Path $EnvFile -Value $envText -Encoding UTF8
 
-# Reuse the existing office Cloudflare Tunnel service. This installer does NOT
-# create a new tunnel, change DNS, or require another Cloudflare login.
+cmd.exe /c "schtasks.exe /Delete /TN ""Anish Tally Connector"" /F >nul 2>&1"
+if($LASTEXITCODE -ne 0){ Write-Host "No previous connector task found; continuing." -ForegroundColor DarkGray }
 
-schtasks.exe /Delete /TN "$TaskName" /F 2>$null | Out-Null
-
-$action=New-ScheduledTaskAction -Execute $node.Source -Argument ('"' + $Bridge + '"') -WorkingDirectory $InstallDir
+$action=New-ScheduledTaskAction -Execute $node.Source -Argument $Bridge -WorkingDirectory $InstallDir
 $trigger=New-ScheduledTaskTrigger -AtStartup
 $principal=New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $settings=New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
