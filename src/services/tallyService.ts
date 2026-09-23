@@ -384,8 +384,7 @@ export async function sendTallyRequest(
     }
   }
 
-  // Strategy 2: Direct browser fetch (for when running on local desktop with CORS disabled or direct bridge)
-  try {
+  // In proxy mode the browser must never bypass the hosted backend.\n  if (config.proxyMode !== false) {\n    throw new Error('Hosted Tally proxy request failed; direct browser fallback is disabled.');\n  }\n\n  // Direct browser fetch is allowed only when proxy mode is explicitly disabled.\n  try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
 
