@@ -23,7 +23,7 @@ async function startServer() {
 
   const getTallyTarget = () => {
     const localTallyUrl = "http://127.0.0.1:9000";
-    const bridgeUrl = (process.env.TALLY_BRIDGE_URL || "").replace(/\/$/, "");
+    const bridgeUrl = (process.env.TALLY_BRIDGE_URL || "https://tally-bridge.anish-tech.online").replace(/\/$/, "");
     const bridgeToken = process.env.TALLY_BRIDGE_TOKEN || "";
     return {
       localTallyUrl,
