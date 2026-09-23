@@ -87,48 +87,11 @@ export const TallyDiagnosticHub: React.FC<TallyDiagnosticHubProps> = ({
     setTimeout(() => setCopiedScript(null), 2500);
   };
 
-  const nodeBridgeScript = `// Legacy local CORS bridge is intentionally disabled.
+  const nodeBridgeScript = `The legacy local CORS bridge on port 9001 is disabled.
 
-// Use the secure Office Connector installer instead.
-const http = require('http');
-
-const PORT = 9001;
-const TALLY_URL = 'http://127.0.0.1:9000';
-
-const server = http.createServer((req, res) => {
-  // Add CORS headers so browser can access Tally
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    res.end();
-    return;
-  }
-
-  let body = '';
-  req.on('data', chunk => { body += chunk; });
-  req.on('end', async () => {
-    try {
-      const tallyRes = await fetch(TALLY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/xml;charset=UTF-8' },
-        body: body
-      });
-      const text = await tallyRes.text();
-      res.writeHead(tallyRes.status, { 'Content-Type': 'text/xml' });
-      res.end(text);
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
-    }
-  });
-});
-
-server.listen(PORT, () => {
-  console.log(\`🟢 Tally CORS Bridge running on http://localhost:\${PORT} -> forwarding to \${TALLY_URL}\`);
-});`;
+Use the secure Office Connector installer from this portal instead.
+It connects Office Tally Prime (127.0.0.1:9000) to the hosted portal
+through the Cloudflare office bridge without exposing Tally publicly.`; 
 
   const windowsBatScript = `@echo off
 title Anish Tally Office Connector
