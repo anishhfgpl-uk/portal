@@ -38,13 +38,40 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "No XML body provided in request" });
     }
 
-    const { localTallyUrl, bridgeUrl, bridgeToken, targetUrl } = getTallyTarget();
+    const { localTallyUrl, bridgeUrl, bridgeToken: envBridgeToken, targetUrl } = getTallyTarget();
+
+    // For remote access, allow the portal user to supply the office connector token
+    // in the configured Tally URL as: https://tally-bridge.anish-tech.online?token=...
+    // The token is never sent to the browser-side Tally endpoint; it is forwarded
+    // only from this server to the office bridge over HTTPS.
+    let requestBridgeToken = envBridgeToken;
+    try {
+      const requestedUrl =
+        typeof req.body === "object" && req.body?.url
+          ? String(req.body.url)
+          : "";
+      if (requestedUrl && bridgeUrl) {
+        const requested = new URL(requestedUrl);
+        const configured = new URL(bridgeUrl);
+        if (requested.origin === configured.origin) {
+          requestBridgeToken = requested.searchParams.get("token") || envBridgeToken;
+        }
+      }
+    } catch {}
+
+    if (bridgeUrl && !requestBridgeToken) {
+      return res.status(503).json({
+        success: false,
+        error: "Office Tally connector token is not configured. Enter the connector URL with ?token=YOUR_TOKEN in Tally Settings, or set TALLY_BRIDGE_TOKEN on the server.",
+        code: "BRIDGE_TOKEN_MISSING",
+      });
+    }
     const headers: Record<string, string> = {
       "Content-Type": "text/xml;charset=UTF-8",
     };
 
-    if (bridgeUrl && bridgeToken) {
-      headers["X-Bridge-Token"] = bridgeToken;
+    if (bridgeUrl && requestBridgeToken) {
+      headers["X-Bridge-Token"] = requestBridgeToken;
     }
 
     const controller = new AbortController();
