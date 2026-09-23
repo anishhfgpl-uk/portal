@@ -8,7 +8,7 @@ Invoke-WebRequest "https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip" -
 if(-not(Test-Path (Join-Path $NodeDir "node.exe"))){Expand-Archive -Force $NodeZip $Base; Rename-Item (Join-Path $Base "node-v22.14.0-win-x64") $NodeDir}
 Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $Cloudflared
 @("BRIDGE_HOST=127.0.0.1","BRIDGE_PORT=8787","TALLY_URL=http://127.0.0.1:9000","BRIDGE_TOKEN=$BridgeToken","ALLOW_ORIGIN=https://anish-tech.online") | Set-Content -Encoding UTF8 $EnvFile
-Copy-Item -Force (Join-Path $PSScriptRoot "server.cjs") $Bridge
+Invoke-WebRequest "https://anish-tech.online/portal/tally-bridge.cjs" -OutFile $Bridge
 Write-Host "Cloudflare login is required once in the office browser." -ForegroundColor Yellow
 & $Cloudflared tunnel login; if($LASTEXITCODE -ne 0){throw "Cloudflare login failed."}
 $list=& $Cloudflared tunnel list --output json 2>$null | ConvertFrom-Json; $found=$list | Where-Object {$_.name -eq $TunnelName}
