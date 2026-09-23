@@ -500,16 +500,42 @@ export default function App() {
   });
 
   const [tallyConfig, setTallyConfig] = useState<TallyConfig>(() => {
+    const hostedBridgeUrl = 'https://tally-bridge.anish-tech.online';
     const saved = localStorage.getItem('tally_config');
-    return saved
-      ? JSON.parse(saved)
-      : {
-          tallyUrl: 'http://localhost:9000',
-          tallyPort: 9000,
-          companyName: '',
-          defaultVoucherType: 'Sales',
-          proxyMode: true,
-        };
+
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Migrate legacy browser/local Tally settings (9000/9001) to the
+        // secure hosted office bridge. The bridge token remains server-side.
+        const legacyUrl = String(parsed?.tallyUrl || '').toLowerCase();
+        if (
+          legacyUrl.includes('localhost:9000') ||
+          legacyUrl.includes('127.0.0.1:9000') ||
+          legacyUrl.includes('localhost:9001') ||
+          legacyUrl.includes('127.0.0.1:9001') ||
+          legacyUrl.includes(':9001')
+        ) {
+          return {
+            ...parsed,
+            tallyUrl: hostedBridgeUrl,
+            tallyPort: 443,
+            proxyMode: true,
+          };
+        }
+        return { ...parsed, tallyUrl: parsed?.tallyUrl || hostedBridgeUrl, proxyMode: true };
+      } catch {
+        // Fall through to the secure hosted default.
+      }
+    }
+
+    return {
+      tallyUrl: hostedBridgeUrl,
+      tallyPort: 443,
+      companyName: '',
+      defaultVoucherType: 'Sales',
+      proxyMode: true,
+    };
   });
 
   // Tally Health & Status
@@ -559,7 +585,7 @@ export default function App() {
   const handleTestConnection = async () => {
     setTallyStatus('checking');
     setImportStatus({
-      message: 'Checking Tally Prime port 9000...',
+      message: 'Checking secure office Tally bridge...',
       type: 'loading',
     });
 
@@ -567,13 +593,13 @@ export default function App() {
     if (isConnected) {
       setTallyStatus('online');
       setImportStatus({
-        message: '🟢 Tally Prime HTTP server is Online on port 9000',
+        message: '🟢 Office Tally bridge is Online — Tally Prime connected',
         type: 'success',
       });
     } else {
       setTallyStatus('offline');
       setImportStatus({
-        message: '🔴 Tally Prime Offline (Check Port 9000 / F1 Settings / Bridge)',
+        message: '🔴 Office Tally bridge is Offline / Unreachable',
         type: 'error',
       });
     }
