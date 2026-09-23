@@ -127,6 +127,20 @@ async function startServer() {
   app.post("/api/tally/request", tallyProxy);
   app.post("/app/api/tally/request", tallyProxy);
 
+  app.get("/api/tally/bridge-health", async (_req, res) => {
+    const { bridgeUrl } = getTallyTarget();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(bridgeUrl + "/health", { method: "GET", signal: controller.signal });
+      clearTimeout(timeoutId);
+      const payload = await response.json().catch(() => null);
+      return res.status(response.ok ? 200 : 502).json({ ok: response.ok && Boolean(payload?.ok), bridgeUrl, bridge: payload });
+    } catch (error: any) {
+      return res.status(502).json({ ok: false, bridgeUrl, error: error?.message || "Office bridge health check failed" });
+    }
+  });
+
   app.post("/api/tally/test", async (req, res) => {
     const testXml =
       "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>CompanyInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>";
