@@ -36,7 +36,7 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "No XML body provided in request" });
     }
 
-    const { localTallyUrl, bridgeUrl, bridgeToken: envBridgeToken, targetUrl } = getTallyTarget();
+    const { localTallyUrl, bridgeUrl, targetUrl } = getTallyTarget();
 
     // The office connector is protected by the Cloudflare Tunnel/private network.
     // No browser-side token is required for the hosted portal.
