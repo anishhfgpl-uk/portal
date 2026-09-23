@@ -24,11 +24,9 @@ async function startServer() {
   const getTallyTarget = () => {
     const localTallyUrl = "http://127.0.0.1:9000";
     const bridgeUrl = (process.env.TALLY_BRIDGE_URL || "https://tally-bridge.anish-tech.online").replace(/\/$/, "");
-    const bridgeToken = process.env.TALLY_BRIDGE_TOKEN || "";
     return {
       localTallyUrl,
       bridgeUrl,
-      bridgeToken,
       targetUrl: bridgeUrl ? `${bridgeUrl}/tally` : localTallyUrl,
     };
   };
@@ -40,39 +38,12 @@ async function startServer() {
 
     const { localTallyUrl, bridgeUrl, bridgeToken: envBridgeToken, targetUrl } = getTallyTarget();
 
-    // For remote access, allow the portal user to supply the office connector token
-    // in the configured Tally URL as: https://tally-bridge.anish-tech.online?token=...
-    // The token is never sent to the browser-side Tally endpoint; it is forwarded
-    // only from this server to the office bridge over HTTPS.
-    let requestBridgeToken = envBridgeToken;
-    try {
-      const requestedUrl =
-        typeof req.body === "object" && req.body?.url
-          ? String(req.body.url)
-          : "";
-      if (requestedUrl && bridgeUrl) {
-        const requested = new URL(requestedUrl);
-        const configured = new URL(bridgeUrl);
-        if (requested.origin === configured.origin) {
-          requestBridgeToken = requested.searchParams.get("token") || envBridgeToken;
-        }
-      }
-    } catch {}
-
-    if (bridgeUrl && !requestBridgeToken) {
-      return res.status(503).json({
-        success: false,
-        error: "Office Tally connector token is not configured. Enter the connector URL with ?token=YOUR_TOKEN in Tally Settings, or set TALLY_BRIDGE_TOKEN on the server.",
-        code: "BRIDGE_TOKEN_MISSING",
-      });
-    }
+    // The office connector is protected by the Cloudflare Tunnel/private network.
+    // No browser-side token is required for the hosted portal.
     const headers: Record<string, string> = {
       "Content-Type": "text/xml;charset=UTF-8",
     };
 
-    if (bridgeUrl && requestBridgeToken) {
-      headers["X-Bridge-Token"] = requestBridgeToken;
-    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45000);
