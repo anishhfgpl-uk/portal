@@ -147,6 +147,51 @@ pause`;
     URL.revokeObjectURL(url);
   };
 
+  const downloadOfficeConnector = () => {
+    const installer = `# Anish Technologies - Tally Office Connector
+# Run PowerShell as Administrator on the OFFICE PC where Tally Prime is running.
+# This connector keeps Tally 127.0.0.1:9000 reachable through the secure
+# Cloudflare hostname used by the portal.
+
+$ErrorActionPreference = 'Stop'
+$Cloudflared = "$env:ProgramFiles\\cloudflared\\cloudflared.exe"
+$InstallDir = "$env:ProgramFiles\\cloudflared"
+
+Write-Host "=== Anish Tally Office Connector ===" -ForegroundColor Cyan
+Write-Host "Tally target: http://127.0.0.1:9000"
+Write-Host "Bridge hostname: tally-bridge.anish-tech.online"
+Write-Host ""
+
+if (-not (Test-Path $Cloudflared)) {
+  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+  $tmp = Join-Path $env:TEMP "cloudflared.exe"
+  Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $tmp
+  Move-Item -Force $tmp $Cloudflared
+}
+
+Write-Host "Enter the Cloudflare Tunnel token for tally-bridge.anish-tech.online:" -ForegroundColor Yellow
+$Token = Read-Host "Tunnel token"
+if ([string]::IsNullOrWhiteSpace($Token)) { throw "Tunnel token is required." }
+
+& $Cloudflared service uninstall 2>$null
+& $Cloudflared service install $Token
+Start-Service cloudflared
+Write-Host ""
+Write-Host "Connector installed and started." -ForegroundColor Green
+Write-Host "Keep Tally Prime HTTP Server enabled on port 9000."
+Write-Host "The portal will use https://tally-bridge.anish-tech.online"
+Write-Host ""
+Read-Host "Press Enter to close"
+`;
+    const blob = new Blob([installer], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Anish-Tally-Office-Connector.ps1';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* 1. Live Connection Status Header Card */}
@@ -354,18 +399,27 @@ pause`;
                 <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-800 flex items-center justify-center font-extrabold text-sm mb-3">
                   3
                 </div>
-                <h5 className="font-bold text-slate-800 text-sm">1-Click Windows BAT Script</h5>
+                <h5 className="font-bold text-slate-800 text-sm">Office Connector (Anywhere → Tally)</h5>
                 <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                  Apne Windows PC par humara 1-click batch script download karke double click karein. Yeh localhost:9000 ko CORS-friendly proxy bana deta hai.
+                  Office PC par connector installer chalayen. Yeh Cloudflare ke secure outbound tunnel ke through Tally 127.0.0.1:9000 ko portal se connect rakhega, bina port 9000 ko public kiye.
                 </p>
               </div>
-              <button
-                onClick={downloadBatFile}
-                className="w-full flex items-center justify-center space-x-1.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download .BAT File</span>
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={downloadOfficeConnector}
+                  className="w-full flex items-center justify-center space-x-1.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Office Connector</span>
+                </button>
+                <button
+                  onClick={downloadBatFile}
+                  className="w-full flex items-center justify-center space-x-1.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Local .BAT</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
