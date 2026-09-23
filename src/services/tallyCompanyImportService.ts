@@ -30,18 +30,44 @@ function parseCompanyXml(xml: string): SellerInfo[] {
   if (!doc) return [];
 
   const candidates: Element[] = [];
-  Array.from(doc.getElementsByTagName('COMPANY')).forEach(x => candidates.push(x));
-  Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(x => candidates.push(x));
-  Array.from(doc.getElementsByTagName('CURRENT_COMPANY')).forEach(x => candidates.push(x));
+  const addCandidate = (el: Element | null | undefined) => {
+    if (!el || candidates.includes(el)) return;
+    candidates.push(el);
+  };
+
+  // Tally Prime can return company masters in several shapes depending on
+  // version/query: <COMPANY>, <COMPANY .../>, or a wrapper containing
+  // SERVERCOMPANYNAME/COMPANYNAME plus the company fields. Be deliberately
+  // tolerant here instead of assuming one exact XML shape.
+  Array.from(doc.getElementsByTagName('COMPANY')).forEach(addCandidate);
+  Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(addCandidate);
+  Array.from(doc.getElementsByTagName('CURRENT_COMPANY')).forEach(addCandidate);
   Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => {
-    const company = x.getElementsByTagName('COMPANY')[0];
-    if (company) candidates.push(company);
+    addCandidate(x.getElementsByTagName('COMPANY')[0]);
   });
+
+  // CompanyInfo/Object exports sometimes expose the company name at the
+  // envelope level rather than inside a COMPANY element. In that case use
+  // the response element itself as the candidate so its child fields can
+  // still be read by value().
+  if (candidates.length === 0) {
+    const root = doc.documentElement;
+    const rootName = value(root, 'SERVERCOMPANYNAME', 'CURRENTCOMPANY', 'CURRENT_COMPANY', 'COMPANYNAME', 'NAME');
+    if (rootName) addCandidate(root);
+  }
+
+  // Some Tally builds return a generic OBJECT node with NAME as an attribute.
+  if (candidates.length === 0) {
+    Array.from(doc.getElementsByTagName('*')).forEach(el => {
+      const attrName = clean(el.getAttribute('NAME') || '');
+      if (attrName && /company/i.test(el.tagName)) addCandidate(el);
+    });
+  }
 
   const out: SellerInfo[] = [];
   const seen = new Set<string>();
   candidates.forEach((comp, index) => {
-    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY', 'SERVERCOMPANYNAME') || clean(comp.getAttribute('NAME') || '');
+    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY', 'SERVERCOMPANYNAME', 'COMPANYNAME') || clean(comp.getAttribute('NAME') || '');
     if (!name || seen.has(name.toLowerCase())) return;
     seen.add(name.toLowerCase());
 
