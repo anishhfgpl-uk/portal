@@ -9,7 +9,7 @@ import {
 } from '../utils/gstUtils';
 
 export const DEFAULT_TALLY_CONFIG: TallyConfig = {
-  tallyUrl: 'http://localhost:9000',
+  tallyUrl: 'https://tally-bridge.anish-tech.online',
   proxyMode: true,
   autoSync: false,
   companyName: '',
