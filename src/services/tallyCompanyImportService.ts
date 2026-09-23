@@ -109,7 +109,7 @@ const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
             <NATIVEMETHOD>*</NATIVEMETHOD>
             <FILTERS>CurrentCompanyFilter</FILTERS>
           </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$Name = ##SVCURRENTCOMPANY</SYSTEM>
+          <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM>
         </TDLMESSAGE>
       </TDL>
     </DESC>
