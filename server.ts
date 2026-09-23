@@ -44,6 +44,15 @@ async function startServer() {
       "Content-Type": "text/xml;charset=UTF-8",
     };
 
+    // The bridge keeps its token only on the office connector. The hosted
+    // server must forward the same secret server-to-server; it is never sent
+    // from the browser.
+    const bridgeToken = process.env.TALLY_BRIDGE_TOKEN?.trim();
+    if (bridgeToken) {
+      headers["X-Bridge-Token"] = bridgeToken;
+      headers["Authorization"] = `Bearer ${bridgeToken}`;
+    }
+
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45000);
