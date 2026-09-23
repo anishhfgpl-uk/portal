@@ -1,25 +1,76 @@
-param([string]$BridgeToken="",[string]$TunnelName="anish-tally",[string]$Hostname="tally-bridge.anish-tech.online")
+param([string]$BridgeToken="")
 $ErrorActionPreference="Stop"
-$Base=Join-Path $env:ProgramData "AnishTallyConnector"; New-Item -ItemType Directory -Force -Path $Base | Out-Null
-$NodeZip=Join-Path $Base "node.zip"; $NodeDir=Join-Path $Base "node"; $Cloudflared=Join-Path $Base "cloudflared.exe"; $Bridge=Join-Path $Base "tally-bridge.cjs"; $Config=Join-Path $Base "config.yml"; $EnvFile=Join-Path $Base ".env"
+
+$InstallDir="C:\ProgramData\AnishTallyConnector"
+$BridgeUrl="https://tally-bridge.anish-tech.online"
+$BridgeScriptUrl="https://raw.githubusercontent.com/anishhfgpl-uk/portal/main/public/tally-bridge.cjs"
+$Bridge=Join-Path $InstallDir "tally-bridge.cjs"
+$EnvFile=Join-Path $InstallDir ".env"
+$TaskName="Anish Tally Connector"
+
 Write-Host "=== Anish Tally Connector installer ===" -ForegroundColor Cyan
-Invoke-WebRequest "https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip" -OutFile $NodeZip
-if(-not(Test-Path (Join-Path $NodeDir "node.exe"))){Expand-Archive -Force $NodeZip $Base; Rename-Item (Join-Path $Base "node-v22.14.0-win-x64") $NodeDir}
-Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $Cloudflared
-@("BRIDGE_HOST=127.0.0.1","BRIDGE_PORT=8787","TALLY_URL=http://127.0.0.1:9000","BRIDGE_TOKEN=$BridgeToken","ALLOW_ORIGIN=https://anish-tech.online") | Set-Content -Encoding UTF8 $EnvFile
-Invoke-WebRequest "https://anish-tech.online/portal/tally-bridge.cjs" -OutFile $Bridge
-Write-Host "Cloudflare login is required once in the office browser." -ForegroundColor Yellow
-& $Cloudflared tunnel login; if($LASTEXITCODE -ne 0){throw "Cloudflare login failed."}
-$list=& $Cloudflared tunnel list --output json 2>$null | ConvertFrom-Json; $found=$list | Where-Object {$_.name -eq $TunnelName}
-if(-not $found){& $Cloudflared tunnel create $TunnelName; if($LASTEXITCODE -ne 0){throw "Could not create Cloudflare tunnel."}}
-& $Cloudflared tunnel route dns $TunnelName $Hostname
-$list=& $Cloudflared tunnel list --output json | ConvertFrom-Json; $row=$list | Where-Object {$_.name -eq $TunnelName} | Select-Object -First 1; $uuid=$row.id; if(-not $uuid){throw "Could not determine tunnel ID."}
-@("tunnel: $uuid","credentials-file: $env:USERPROFILE\.cloudflared\$uuid.json","ingress:","  - hostname: $Hostname","    service: http://127.0.0.1:8787","  - service: http_status:404") | Set-Content -Encoding UTF8 $Config
-$nodeExe=Join-Path $NodeDir "node.exe"
-$nodeTask="`"$nodeExe`" `"$Bridge`""
-$cfTask="`"$Cloudflared`" tunnel --config `"$Config`" run $TunnelName"
-schtasks /Create /F /TN "Anish Tally Connector" /SC ONLOGON /RL HIGHEST /TR $nodeTask | Out-Null
-schtasks /Create /F /TN "Anish Tally Cloudflare Tunnel" /SC ONLOGON /RL HIGHEST /TR $cfTask | Out-Null
-Start-Process $nodeExe -ArgumentList @($Bridge) -WorkingDirectory $Base -WindowStyle Hidden
-Start-Process $Cloudflared -ArgumentList @("tunnel","--config",$Config,"run",$TunnelName) -WorkingDirectory $Base -WindowStyle Hidden
-Write-Host ""; Write-Host "Connector installed." -ForegroundColor Green; Write-Host "Office bridge: https://$Hostname"; Write-Host "TallyPrime must be running with HTTP/XML server enabled on port 9000."
+
+if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+  throw "Run PowerShell as Administrator."
+}
+
+$node=Get-Command node -ErrorAction SilentlyContinue
+if(-not $node){ throw "Node.js is not installed. Install Node.js LTS and run this installer again." }
+
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+if([string]::IsNullOrWhiteSpace($BridgeToken)){
+  $BridgeToken=Read-Host "Enter the SAME TALLY_BRIDGE_TOKEN configured on the hosted portal"
+}
+if([string]::IsNullOrWhiteSpace($BridgeToken)){ throw "Bridge token is required." }
+
+Invoke-WebRequest -UseBasicParsing $BridgeScriptUrl -OutFile $Bridge
+
+$envText=@"
+BRIDGE_HOST=127.0.0.1
+BRIDGE_PORT=8787
+TALLY_URL=http://127.0.0.1:9000
+BRIDGE_TOKEN=$BridgeToken
+ALLOW_ORIGIN=https://anish-tech.online
+"@
+Set-Content -Path $EnvFile -Value $envText -Encoding UTF8
+
+# Reuse the existing office Cloudflare Tunnel service. This installer does NOT
+# create a new tunnel, change DNS, or require another Cloudflare login.
+
+schtasks.exe /Delete /TN "$TaskName" /F 2>$null | Out-Null
+
+$action=New-ScheduledTaskAction -Execute $node.Source -Argument ('"' + $Bridge + '"') -WorkingDirectory $InstallDir
+$trigger=New-ScheduledTaskTrigger -AtStartup
+$principal=New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$settings=New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Start-ScheduledTask -TaskName $TaskName
+Start-Sleep -Seconds 2
+
+try{
+  $local=Invoke-RestMethod "http://127.0.0.1:8787/health" -TimeoutSec 5
+  Write-Host "LOCAL BRIDGE: OK" -ForegroundColor Green
+  Write-Host ("Authentication: "+$local.auth)
+  Write-Host ("Tally: "+$local.tallyUrl)
+}catch{
+  Write-Host "LOCAL BRIDGE CHECK FAILED" -ForegroundColor Red
+  Write-Host $_.Exception.Message
+}
+
+try{
+  $remote=Invoke-RestMethod "$BridgeUrl/health" -TimeoutSec 10
+  Write-Host "CLOUDFLARE BRIDGE: OK" -ForegroundColor Green
+  Write-Host ("Service: "+$remote.service)
+}catch{
+  Write-Host "CLOUDFLARE BRIDGE CHECK FAILED" -ForegroundColor Yellow
+  Write-Host "Verify the existing Cloudflare Tunnel routes $BridgeUrl to http://127.0.0.1:8787."
+}
+
+Write-Host ""
+Write-Host "INSTALLATION COMPLETE" -ForegroundColor Green
+Write-Host "Bridge: $BridgeUrl"
+Write-Host "Local folder: $InstallDir"
+Write-Host "Task: $TaskName"
+Write-Host ""
+Write-Host "Next: set the same token in the hosted portal as TALLY_BRIDGE_TOKEN, then use Test Connection."
