@@ -25,12 +25,14 @@ const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
 const TALLY_URL = process.env.TALLY_URL || 'http://127.0.0.1:9000';
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || '';
+const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || 'https://anish-tech.online';
 const MAX_BODY = 10 * 1024 * 1024;
 
 function send(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': process.env.ALLOW_ORIGIN || '*',
+    'Access-Control-Allow-Origin': ALLOW_ORIGIN,
+    'Vary': 'Origin',
     'Access-Control-Allow-Headers': 'Content-Type, X-Bridge-Token, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
   });
@@ -38,7 +40,7 @@ function send(res, status, body) {
 }
 
 function authorized(req) {
-  if (!BRIDGE_TOKEN) return true;
+  if (!BRIDGE_TOKEN) return false;
   const header = req.headers['x-bridge-token'] || '';
   const auth = req.headers.authorization || '';
   return header === BRIDGE_TOKEN || auth === `Bearer ${BRIDGE_TOKEN}`;
@@ -76,7 +78,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (!authorized(req)) {
-    return send(res, 401, { ok: false, error: 'Unauthorized bridge token' });
+    return send(res, 401, { ok: false, error: 'Bridge token authentication is required' });
   }
 
   try {
@@ -122,5 +124,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Tally Bridge listening on http://${HOST}:${PORT}`);
   console.log(`Forwarding to Tally: ${TALLY_URL}`);
-  console.log(BRIDGE_TOKEN ? 'Bridge token authentication: ENABLED' : 'WARNING: Bridge token authentication: DISABLED');
+  console.log(BRIDGE_TOKEN ? 'Bridge token authentication: ENABLED' : 'ERROR: Bridge token authentication is DISABLED; POST requests will be rejected');
 });
