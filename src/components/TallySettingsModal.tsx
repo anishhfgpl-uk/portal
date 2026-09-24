@@ -53,6 +53,24 @@ export const TallySettingsModal: React.FC<Props> = ({ config, onSave, onClose })
             </span>
           </div>
 
+          {/* Office Bridge Token */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Office Tally Connector Token
+            </label>
+            <input
+              type="password"
+              value={formData.bridgeToken || ''}
+              onChange={(e) => setFormData({ ...formData, bridgeToken: e.target.value })}
+              className="w-full px-3 py-2 text-xs font-mono bg-amber-50 border border-amber-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              placeholder="Paste BRIDGE_TOKEN from office connector"
+              autoComplete="off"
+            />
+            <span className="text-[11px] text-slate-500 mt-1 block">
+              Office PC: C:\ProgramData\AnishTallyConnector\.env में BRIDGE_TOKEN मिलता है. यह token सिर्फ इस browser में local settings में रखा जाता है.
+            </span>
+          </div>
+
           {/* Company Name */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
