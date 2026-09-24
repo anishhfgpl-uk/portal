@@ -154,7 +154,7 @@ const CURRENT_COMPANY_XML = `<ENVELOPE>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>CurrentCompanyName</ID>
+    <ID>CompanyInfo</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -163,17 +163,17 @@ const CURRENT_COMPANY_XML = `<ENVELOPE>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="CurrentCompanyName" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes">
-            <TYPE>Company</TYPE>
-            <FETCH>NAME</FETCH>
-            <FILTER>CurrentCompanyFilter</FILTER>
+          <OBJECT NAME="CurrentCompany">
+            <LOCALFORMULA>CurrentCompany:##SVCURRENTCOMPANY</LOCALFORMULA>
+          </OBJECT>
+          <COLLECTION NAME="CompanyInfo">
+            <OBJECTS>CurrentCompany</OBJECTS>
           </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$$IsEqual:$$Name:##SVCurrentCompany</SYSTEM>
         </TDLMESSAGE>
       </TDL>
     </DESC>
   </BODY>
-</ENVELOPE>`;
+</ENVELOPE>`
 
 const COMPANY_OBJECT_XML = (companyName: string) => {
   const escaped = companyName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
