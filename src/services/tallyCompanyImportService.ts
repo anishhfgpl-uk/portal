@@ -35,28 +35,17 @@ function parseCompanyXml(xml: string): SellerInfo[] {
     candidates.push(el);
   };
 
-  // Tally Prime can return company masters in several shapes depending on
-  // version/query: <COMPANY>, <COMPANY .../>, or a wrapper containing
-  // SERVERCOMPANYNAME/COMPANYNAME plus the company fields. Be deliberately
-  // tolerant here instead of assuming one exact XML shape.
   Array.from(doc.getElementsByTagName('COMPANY')).forEach(addCandidate);
   Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(addCandidate);
   Array.from(doc.getElementsByTagName('CURRENT_COMPANY')).forEach(addCandidate);
-  Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => {
-    addCandidate(x.getElementsByTagName('COMPANY')[0]);
-  });
+  Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => addCandidate(x.getElementsByTagName('COMPANY')[0]));
 
-  // CompanyInfo/Object exports sometimes expose the company name at the
-  // envelope level rather than inside a COMPANY element. In that case use
-  // the response element itself as the candidate so its child fields can
-  // still be read by value().
   if (candidates.length === 0) {
     const root = doc.documentElement;
     const rootName = value(root, 'SERVERCOMPANYNAME', 'CURRENTCOMPANY', 'CURRENT_COMPANY', 'COMPANYNAME', 'NAME');
     if (rootName) addCandidate(root);
   }
 
-  // Some Tally builds return a generic OBJECT node with NAME as an attribute.
   if (candidates.length === 0) {
     Array.from(doc.getElementsByTagName('*')).forEach(el => {
       const attrName = clean(el.getAttribute('NAME') || '');
@@ -66,6 +55,7 @@ function parseCompanyXml(xml: string): SellerInfo[] {
 
   const out: SellerInfo[] = [];
   const seen = new Set<string>();
+
   candidates.forEach((comp, index) => {
     const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY', 'SERVERCOMPANYNAME', 'COMPANYNAME') || clean(comp.getAttribute('NAME') || '');
     if (!name || seen.has(name.toLowerCase())) return;
@@ -117,62 +107,24 @@ function parseCompanyXml(xml: string): SellerInfo[] {
 }
 
 const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>Export</TALLYREQUEST>
-    <TYPE>Collection</TYPE>
-    <ID>CurrentCompanyDetails</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="CurrentCompanyDetails" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No">
-            <TYPE>Company</TYPE>
-            <FILTER>CurrentCompanyFilter</FILTER>
-            <FETCH>
-              NAME, MAILINGNAME, BASICCOMPANYFORMALNAME, ADDRESS, STATENAME,
-              COUNTRYNAME, PINCODE, PHONENUMBER, MOBILENUMBER, TELEPHONENUMBER,
-              EMAIL, EMAILID, WEBSITE, GSTIN, PARTYGSTIN, PANNUMBER,
-              INCOMETAXNUMBER, STARTINGFROM, ENDINGAT, BOOKSFROM,
-              CURRENCYSYMBOL, CURRENCYFORMALNAME, BANKNAME, BANKACCOUNTNUMBER,
-              IFSCODE, GUID
-            </FETCH>
-          </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyDetails</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE>
+    <COLLECTION NAME="CurrentCompanyDetails" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No">
+      <TYPE>Company</TYPE><FILTER>CurrentCompanyFilter</FILTER>
+      <FETCH>NAME, MAILINGNAME, BASICCOMPANYFORMALNAME, ADDRESS, STATENAME, COUNTRYNAME, PINCODE, PHONENUMBER, MOBILENUMBER, TELEPHONENUMBER, EMAIL, EMAILID, WEBSITE, GSTIN, PARTYGSTIN, PANNUMBER, INCOMETAXNUMBER, STARTINGFROM, ENDINGAT, BOOKSFROM, CURRENCYSYMBOL, CURRENCYFORMALNAME, BANKNAME, BANKACCOUNTNUMBER, IFSCODE, GUID</FETCH>
+    </COLLECTION>
+    <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCURRENTCOMPANY</SYSTEM>
+  </TDLMESSAGE></TDL></DESC></BODY>
 </ENVELOPE>`;
 
 const CURRENT_COMPANY_XML = `<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>Export</TALLYREQUEST>
-    <TYPE>Collection</TYPE>
-    <ID>CurrentCompanyName</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="CurrentCompanyName" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes">
-            <TYPE>Company</TYPE>
-            <FETCH>NAME</FETCH>
-            <FILTER>CurrentCompanyFilter</FILTER>
-          </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCurrentCompany</SYSTEM>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyName</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE>
+    <COLLECTION NAME="CurrentCompanyName" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes">
+      <TYPE>Company</TYPE><FETCH>NAME</FETCH><FILTER>CurrentCompanyFilter</FILTER>
+    </COLLECTION>
+    <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCurrentCompany</SYSTEM>
+  </TDLMESSAGE></TDL></DESC></BODY>
 </ENVELOPE>`;
 
 const COMPANY_OBJECT_XML = (companyName: string) => {
@@ -186,15 +138,10 @@ function currentCompanyName(xml: string): string {
   const doc = parseDocument(xml);
   if (!doc) return '';
 
-  // Tally Prime's standard "List of Companies" response returns the
-  // current company as <COMPANY NAME="..."> with <NAME>...</NAME> inside.
-  // Read the attribute first because NAME is not always a standalone
-  // COMPANYNAME node.
   const company = doc.getElementsByTagName('COMPANY')[0];
   if (company) {
     const attrName = clean(company.getAttribute('NAME') || '');
     if (attrName) return attrName;
-
     const childName = clean(company.getElementsByTagName('NAME')[0]?.textContent || '');
     if (childName) return childName;
   }
@@ -206,8 +153,6 @@ function currentCompanyName(xml: string): string {
     if (text) return text;
   }
 
-  // Last tolerant pass: any element named COMPANY may expose NAME only
-  // as an attribute in Tally XML variants.
   for (const el of Array.from(doc.getElementsByTagName('*'))) {
     const attrName = clean(el.getAttribute('NAME') || '');
     if (attrName && /company/i.test(el.tagName)) return attrName;
@@ -217,16 +162,11 @@ function currentCompanyName(xml: string): string {
 }
 
 function companyProxyPath(): string {
-  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/app')) {
-    return '/app/api/tally/request';
-  }
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/app')) return '/app/api/tally/request';
   return '/api/tally/request';
 }
 
 async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ text: string; via: 'proxy' | 'direct' }> {
-  // Company Import must use the portal backend. When the portal is mounted at
-  // /app, the old /api URL hits the website/tunnel instead of the portal server.
-  // Calling /app/api keeps the request on the same portal origin and avoids CORS.
   if (config.proxyMode !== false) {
     const response = await fetch(companyProxyPath(), {
       method: 'POST',
@@ -246,9 +186,31 @@ async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ 
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  // Primary path: ask Tally for the Company master whose Name equals the
-  // company currently open in Tally. This avoids the fragile two-request
-  // "discover name -> Object export" flow.
+  // IMPORTANT: Tally's standard "List of Companies" export is known to return
+  // <COMPANY NAME="..."><NAME>...</NAME>... and is the most reliable way to
+  // discover the active company on the office installation. Do this FIRST.
+  // The old custom CurrentCompanyDetails/Object sequence could return an empty
+  // Company master even when Tally itself was healthy.
+  let openName = '';
+
+  try {
+    const fallback = await requestCompanyTally(COMPANY_XML_FALLBACK, config);
+    const companies = parseCompanyXml(fallback.text);
+    if (companies.length) {
+      // Prefer the configured/current company if the caller has one, otherwise
+      // return the complete list exactly as Tally returned it.
+      const wanted = clean(config.companyName || '');
+      if (wanted) {
+        const exact = companies.filter(c => c.name.toLowerCase() === wanted.toLowerCase());
+        if (exact.length) return exact;
+      }
+      return companies;
+    }
+  } catch (err) {
+    console.warn('Standard Tally company list query failed:', err);
+  }
+
+  // Secondary path: ask Tally for the Company master filtered to the current company.
   try {
     const master = await requestCompanyTally(CURRENT_COMPANY_MASTER_XML, config);
     const companies = parseCompanyXml(master.text);
@@ -257,8 +219,7 @@ export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALL
     console.warn('Current company master query failed:', err);
   }
 
-  // Fallback: identify the open company and then request its Company object.
-  let openName = '';
+  // Third path: identify the open company and then request its Company object.
   try {
     const current = await requestCompanyTally(CURRENT_COMPANY_XML, config);
     openName = currentCompanyName(current.text);
@@ -269,21 +230,6 @@ export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALL
     }
   } catch (err) {
     console.warn('Current company object fallback failed:', err);
-  }
-
-  // Final fallback for Tally builds that reject Object/Company.
-  try {
-    const fallback = await requestCompanyTally(COMPANY_XML_FALLBACK, config);
-    const companies = parseCompanyXml(fallback.text);
-    if (companies.length) {
-      if (openName) {
-        const exact = companies.filter(c => c.name.toLowerCase() === openName.toLowerCase());
-        if (exact.length) return exact;
-      }
-      return companies;
-    }
-  } catch (err) {
-    console.warn('List of Companies fallback failed:', err);
   }
 
   throw new Error(openName
