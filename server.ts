@@ -47,7 +47,9 @@ async function startServer() {
     // The bridge keeps its token only on the office connector. The hosted
     // server must forward the same secret server-to-server; it is never sent
     // from the browser.
-    const bridgeToken = process.env.TALLY_BRIDGE_TOKEN?.trim();
+    const bridgeToken =
+      process.env.TALLY_BRIDGE_TOKEN?.trim() ||
+      String(req.headers["x-bridge-token"] || req.body?.bridgeToken || "").trim();
     if (bridgeToken) {
       headers["X-Bridge-Token"] = bridgeToken;
       headers["Authorization"] = `Bearer ${bridgeToken}`;
@@ -112,7 +114,7 @@ async function startServer() {
 
   const tallyProxy = async (req: any, res: any) => {
     try {
-      const xmlBody =
+        const xmlBody =
         typeof req.body === "string" ? req.body : req.body?.xml;
 
       return proxyTallyXml(xmlBody, req, res);
