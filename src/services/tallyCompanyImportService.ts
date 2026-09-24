@@ -185,12 +185,34 @@ const COMPANY_XML_FALLBACK = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUES
 function currentCompanyName(xml: string): string {
   const doc = parseDocument(xml);
   if (!doc) return '';
+
+  // Tally Prime's standard "List of Companies" response returns the
+  // current company as <COMPANY NAME="..."> with <NAME>...</NAME> inside.
+  // Read the attribute first because NAME is not always a standalone
+  // COMPANYNAME node.
+  const company = doc.getElementsByTagName('COMPANY')[0];
+  if (company) {
+    const attrName = clean(company.getAttribute('NAME') || '');
+    if (attrName) return attrName;
+
+    const childName = clean(company.getElementsByTagName('NAME')[0]?.textContent || '');
+    if (childName) return childName;
+  }
+
   const names = ['SERVERCOMPANYNAME', 'CURRENTCOMPANY', 'CURRENT_COMPANY', 'COMPANYNAME', 'NAME'];
   for (const n of names) {
     const el = doc.getElementsByTagName(n)[0];
     const text = clean(el?.textContent || '');
     if (text) return text;
   }
+
+  // Last tolerant pass: any element named COMPANY may expose NAME only
+  // as an attribute in Tally XML variants.
+  for (const el of Array.from(doc.getElementsByTagName('*'))) {
+    const attrName = clean(el.getAttribute('NAME') || '');
+    if (attrName && /company/i.test(el.tagName)) return attrName;
+  }
+
   return '';
 }
 
