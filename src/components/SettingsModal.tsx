@@ -42,6 +42,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tallyCompany, setTallyCompany] = useState(tallyConfig.companyName || '');
   const [defaultVoucherType, setDefaultVoucherType] = useState(tallyConfig.defaultVoucherType || 'Sales');
   const [proxyMode, setProxyMode] = useState(tallyConfig.proxyMode !== false);
+  const [bridgeToken, setBridgeToken] = useState(tallyConfig.bridgeToken || '');
 
   const handleGstinChange = (val: string) => {
     const upper = val.toUpperCase();
@@ -78,6 +79,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       companyName: tallyCompany.trim(),
       defaultVoucherType: defaultVoucherType.trim(),
       proxyMode: proxyMode,
+      bridgeToken: bridgeToken.trim(),
     });
 
     alert('✅ Settings saved successfully!');
@@ -279,6 +281,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
                 <span className="text-[11px] text-slate-400 block mt-1">
                   Default Tally Prime XML port is 9000.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
+                  Office Tally Connector Token
+                </label>
+                <input
+                  type="password"
+                  value={bridgeToken}
+                  onChange={(e) => setBridgeToken(e.target.value)}
+                  placeholder="Paste BRIDGE_TOKEN from office PC"
+                  autoComplete="off"
+                  className="w-full bg-amber-50 border border-amber-300 rounded-lg px-3.5 py-2 text-xs font-mono text-slate-800 focus:bg-white focus:border-blue-500 outline-none"
+                />
+                <span className="text-[11px] text-slate-400 block mt-1">
+                  Office PC: C:\\ProgramData\\AnishTallyConnector\\.env → BRIDGE_TOKEN
                 </span>
               </div>
 
