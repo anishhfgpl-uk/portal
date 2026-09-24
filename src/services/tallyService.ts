@@ -359,6 +359,7 @@ export async function sendTallyRequest(
         body: JSON.stringify({
           url: tallyUrl,
           xml: xml,
+          bridgeToken: config.bridgeToken || '',
         }),
       });
 
