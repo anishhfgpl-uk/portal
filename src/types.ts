@@ -167,6 +167,8 @@ export interface SellerInfo {
 
 export interface TallyConfig {
   tallyUrl: string;
+  /** Office bridge secret entered once on this browser; never hard-coded in the app. */
+  bridgeToken?: string;
   tallyPort?: number;
   proxyMode?: boolean;
   autoSync?: boolean;
