@@ -11,12 +11,14 @@ import { XmlPasteModal } from './components/XmlPasteModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CompanyProfileView } from './components/CompanyProfileView';
 import { Gstr1ReportView } from './components/Gstr1ReportView';
+import { TallyVouchersView } from './components/TallyVouchersView';
 
-import { Party, StockItem, Invoice, SellerInfo, TallyConfig, ImportStatusState } from './types';
+import { Party, StockItem, Invoice, SellerInfo, TallyConfig, ImportStatusState, TallyVoucher } from './types';
 import {
   testTallyConnection,
   fetchDebtorsFromTally,
   fetchStockItemsFromTally,
+  fetchAccountingVouchersFromTally,
 } from './services/tallyService';
 import { getStateCodeByName } from './utils/gstUtils';
 
@@ -577,6 +579,10 @@ export default function App() {
     localStorage.setItem('tally_config', JSON.stringify(tallyConfig));
   }, [tallyConfig]);
 
+  useEffect(() => {
+    localStorage.setItem('tally_vouchers', JSON.stringify(tallyVouchers));
+  }, [tallyVouchers]);
+
   // Initial connection check on mount
   useEffect(() => {
     handleTestConnection();
@@ -688,6 +694,29 @@ export default function App() {
       }
     } finally {
       setIsImportingItems(false);
+    }
+  };
+
+  const handleImportVouchersFromTally = async () => {
+    setIsImportingVouchers(true);
+    setImportStatus({ message: 'Fetching Receipt / Credit Note / accounting vouchers from Tally Prime...', type: 'loading' });
+    try {
+      const imported = await fetchAccountingVouchersFromTally(tallyConfig);
+      const relevant = imported.filter(v => {
+        const t = v.voucherType.toLowerCase();
+        return t.includes('receipt') || t.includes('credit note') || t.includes('creditnote') || t.includes('payment') || t.includes('journal') || t.includes('sales');
+      });
+      setTallyVouchers(prev => {
+        const map = new Map(prev.map(v => [v.tallyGuid || v.tallyMasterId || v.id, v]));
+        relevant.forEach(v => map.set(v.tallyGuid || v.tallyMasterId || v.id, v));
+        return Array.from(map.values()).sort((a,b) => b.date.localeCompare(a.date));
+      });
+      setTallyStatus('online');
+      setImportStatus({ message: 'Imported ' + relevant.length + ' Receipt/Credit Note/other vouchers from Tally Prime.', type: 'success' });
+    } catch (err: any) {
+      setImportStatus({ message: 'Voucher Import Failed: ' + err.message, type: 'error' });
+    } finally {
+      setIsImportingVouchers(false);
     }
   };
 
@@ -869,6 +898,8 @@ export default function App() {
         onImportDebtors={handleImportDebtorsFromTally}
         onImportItems={handleImportItemsFromTally}
         onTestConnection={handleTestConnection}
+        onImportVouchers={handleImportVouchersFromTally}
+        isImportingVouchers={isImportingVouchers}
         isImportingDebtors={isImportingDebtors}
         isImportingItems={isImportingItems}
         partyCount={parties.length}
@@ -960,6 +991,10 @@ export default function App() {
               tallyStatus={tallyStatus}
               onTestConnection={handleTestConnection}
             />
+          )}
+
+          {activeTab === 'tally-vouchers' && (
+            <TallyVouchersView vouchers={tallyVouchers} parties={parties} onImport={handleImportVouchersFromTally} isImporting={isImportingVouchers} />
           )}
 
           {activeTab === 'party-master' && (
