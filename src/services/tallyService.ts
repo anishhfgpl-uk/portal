@@ -1,4 +1,4 @@
-import { Party, StockItem, Invoice, TallyConfig, SellerInfo, SyncReport, InvoiceItemRow } from '../types';
+import { Party, StockItem, Invoice, TallyConfig, SellerInfo, SyncReport, InvoiceItemRow, TallyVoucher } from '../types';
 import {
   getStateCodeByName,
   getStateNameByCode,
