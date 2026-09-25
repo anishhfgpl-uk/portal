@@ -501,6 +501,16 @@ export default function App() {
     return INITIAL_COMPANIES[0];
   });
 
+  const [tallyVouchers, setTallyVouchers] = useState<TallyVoucher[]>(() => {
+    try {
+      const saved = localStorage.getItem('tally_vouchers');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      localStorage.removeItem('tally_vouchers');
+      return [];
+    }
+  });
+
   const [tallyConfig, setTallyConfig] = useState<TallyConfig>(() => {
     const hostedBridgeUrl = 'https://tally-bridge.anish-tech.online';
     const saved = localStorage.getItem('tally_config');
