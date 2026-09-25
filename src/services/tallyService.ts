@@ -319,6 +319,44 @@ export const TALLY_XML_QUERIES = {
     </BODY>
 </ENVELOPE>`,
 
+  // All accounting vouchers (Receipt, Credit Note and party-ledger import)
+  // Fetch all voucher types and filter them in the portal UI for compatibility across Tally Prime builds.
+  ACCOUNTING_VOUCHERS_COLLECTION: `<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>AccountingVoucherCollection</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="AccountingVoucherCollection" ISMODIFY="No">
+                        <TYPE>Voucher</TYPE>
+                        <FETCH>
+                            DATE,
+                            VCHTYPE,
+                            VOUCHERTYPENAME,
+                            VOUCHERNUMBER,
+                            REFERENCE,
+                            PARTYLEDGERNAME,
+                            PARTYNAME,
+                            NARRATION,
+                            GUID,
+                            MASTERID,
+                            LEDGERENTRIES.LIST
+                        </FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>`,
+
   // Day Book Export
   DAYBOOK_EXPORT: `<ENVELOPE>
     <HEADER>
@@ -2432,7 +2470,7 @@ export async function performTwoWaySync({
 export async function fetchAccountingVouchersFromTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG
 ): Promise<TallyVoucher[]> {
-  const result = await sendTallyRequest(TALLY_XML_QUERIES.SALES_VOUCHERS_SIMPLE, config);
+  const result = await sendTallyRequest(TALLY_XML_QUERIES.ACCOUNTING_VOUCHERS_COLLECTION, config);
   return parseAccountingVouchersXML(result.text);
 }
 
