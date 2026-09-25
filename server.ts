@@ -200,7 +200,9 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("/", (_req, res) => res.redirect(302, "/Portal/"));
+    // Serve the same built assets and SPA directly under /portal and /Portal.
+    app.use(["/portal", "/Portal"], express.static(distPath));
+    app.get("/", (_req, res) => res.redirect(302, "/portal/"));
 
     // Support the public portal path with the exact requested capitalization.
     // Keep the existing lowercase /portal path working as well.
