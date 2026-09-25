@@ -15,6 +15,7 @@ import {
   Zap,
   ShieldCheck,
   ClipboardList,
+  BookOpen,
 } from 'lucide-react';
 import { ImportStatusState, SellerInfo } from '../types';
 
@@ -31,6 +32,8 @@ interface SidebarProps {
   partyCount: number;
   itemCount: number;
   savedInvoiceCount: number;
+  onImportVouchers: () => void;
+  isImportingVouchers: boolean;
   activeCompany?: SellerInfo;
   companyCount?: number;
 }
@@ -48,6 +51,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   partyCount,
   itemCount,
   savedInvoiceCount,
+  onImportVouchers,
+  isImportingVouchers,
   activeCompany,
   companyCount = 1,
 }) => {
@@ -90,6 +95,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Building2,
       badge: companyCount > 1 ? `${companyCount} Firms` : 'Active',
       badgeColor: 'bg-blue-500/20 text-blue-300',
+    },
+    {
+      id: 'tally-vouchers',
+      label: 'Tally Vouchers & Ledger',
+      icon: BookOpen,
+      badge: null,
     },
     {
       id: 'party-master',
@@ -202,6 +213,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <div className="space-y-1.5 pt-1">
+          <button id="btnImportVouchers" onClick={onImportVouchers} disabled={isImportingVouchers} className="w-full flex items-center justify-center space-x-2 py-2 px-3 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+            <ArrowDownToLine className={isImportingVouchers ? 'w-3.5 h-3.5 animate-spin' : 'w-3.5 h-3.5'} />
+            <span>{isImportingVouchers ? 'Importing Vouchers...' : 'Import Receipt / Credit Note'}</span>
+          </button>
           <button
             id="btnImportDebtors"
             onClick={onImportDebtors}
