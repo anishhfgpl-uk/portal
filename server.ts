@@ -200,10 +200,17 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("/", (_req, res) => res.redirect(302, "/portal/"));
+    app.get("/", (_req, res) => res.redirect(302, "/Portal/"));
+
+    // Support the public portal path with the exact requested capitalization.
+    // Keep the existing lowercase /portal path working as well.
+    app.get(["/Portal", "/Portal/", "/portal", "/portal/"], (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+
     app.use((req, res, next) => {
       if (req.method !== "GET" && req.method !== "HEAD") return next();
-      if (!req.path.startsWith("/portal") && !req.path.startsWith("/app")) return next();
+      if (!req.path.startsWith("/Portal/") && !req.path.startsWith("/portal/") && !req.path.startsWith("/app")) return next();
       if (path.extname(req.path)) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });
