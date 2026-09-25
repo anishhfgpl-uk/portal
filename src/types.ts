@@ -187,3 +187,20 @@ export interface IndianState {
   name: string;
   code: string;
 }
+
+
+export interface TallyVoucher {
+  id: string;
+  date: string;
+  voucherType: string;
+  voucherNumber: string;
+  reference?: string;
+  partyName: string;
+  amount: number;
+  /** Tally sign: positive = debit to party, negative = credit to party. */
+  partyEffect: number;
+  narration?: string;
+  tallyGuid?: string;
+  tallyMasterId?: string;
+  source: 'tally_import';
+}

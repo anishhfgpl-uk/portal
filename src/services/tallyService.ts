@@ -1,4 +1,4 @@
-import { Party, StockItem, Invoice, TallyConfig, SellerInfo, SyncReport, InvoiceItemRow } from '../types';
+import { Party, StockItem, Invoice, TallyConfig, SellerInfo, SyncReport, InvoiceItemRow, TallyVoucher } from '../types';
 import {
   getStateCodeByName,
   getStateNameByCode,
@@ -310,6 +310,44 @@ export const TALLY_XML_QUERIES = {
                             GUID,
                             MASTERID,
                             ALLINVENTORYENTRIES.LIST,
+                            LEDGERENTRIES.LIST
+                        </FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>`,
+
+  // All accounting vouchers (Receipt, Credit Note and party-ledger import)
+  // Fetch all voucher types and filter them in the portal UI for compatibility across Tally Prime builds.
+  ACCOUNTING_VOUCHERS_COLLECTION: `<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>AccountingVoucherCollection</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="AccountingVoucherCollection" ISMODIFY="No">
+                        <TYPE>Voucher</TYPE>
+                        <FETCH>
+                            DATE,
+                            VCHTYPE,
+                            VOUCHERTYPENAME,
+                            VOUCHERNUMBER,
+                            REFERENCE,
+                            PARTYLEDGERNAME,
+                            PARTYNAME,
+                            NARRATION,
+                            GUID,
+                            MASTERID,
                             LEDGERENTRIES.LIST
                         </FETCH>
                     </COLLECTION>
@@ -2427,3 +2465,47 @@ export async function performTwoWaySync({
   };
 }
 
+
+
+export async function fetchAccountingVouchersFromTally(
+  config: TallyConfig = DEFAULT_TALLY_CONFIG
+): Promise<TallyVoucher[]> {
+  const result = await sendTallyRequest(TALLY_XML_QUERIES.ACCOUNTING_VOUCHERS_COLLECTION, config);
+  return parseAccountingVouchersXML(result.text);
+}
+
+export function parseAccountingVouchersXML(xmlInput: string | Document): TallyVoucher[] {
+  const doc = typeof xmlInput === 'string' ? parseTallyXML(xmlInput) : xmlInput;
+  const voucherElements = Array.from(doc.getElementsByTagName('VOUCHER'));
+  return voucherElements.map((vch, index) => {
+    const voucherType = getAttributeOrNode(vch, 'VCHTYPE', 'VOUCHERTYPENAME') || 'Unknown';
+    const number = getNodeValue(vch, 'VOUCHERNUMBER') || getNodeValue(vch, 'REFERENCE') || ('TALLY-' + (index + 1));
+    const date = formatTallyDateToIso(getNodeValue(vch, 'DATE'));
+    const partyName = getNodeValue(vch, 'PARTYLEDGERNAME') || getNodeValue(vch, 'PARTYNAME') || getNodeValue(vch, 'LEDGERNAME') || '';
+    const reference = getNodeValue(vch, 'REFERENCE');
+    const narration = getNodeValue(vch, 'NARRATION');
+    const guid = getNodeValue(vch, 'GUID');
+    const masterId = getNodeValue(vch, 'MASTERID');
+    const ledgerNodes = Array.from(vch.getElementsByTagName('LEDGERENTRIES.LIST'));
+    let partyEffect = 0;
+    let partyLedger = partyName;
+    for (const node of ledgerNodes) {
+      const name = getNodeValue(node, 'LEDGERNAME');
+      const amount = parseFloat(getNodeValue(node, 'AMOUNT') || '0') || 0;
+      const isParty = getNodeValue(node, 'ISPARTYLEDGER').toLowerCase() === 'yes';
+      if (isParty || (partyName && name.toLowerCase() === partyName.toLowerCase())) {
+        partyEffect += amount;
+        if (name) partyLedger = name;
+      }
+    }
+    if (!partyEffect) {
+      partyEffect = parseFloat(getNodeValue(vch, 'AMOUNT') || '0') || 0;
+    }
+    return {
+      id: 'tally-voucher-' + (guid || masterId || number) + '-' + index,
+      date, voucherType, voucherNumber: number, reference,
+      partyName: partyLedger, amount: Math.abs(partyEffect), partyEffect,
+      narration, tallyGuid: guid, tallyMasterId: masterId, source: 'tally_import'
+    };
+  });
+}
