@@ -558,6 +558,7 @@ export default function App() {
   });
   const [isImportingDebtors, setIsImportingDebtors] = useState<boolean>(false);
   const [isImportingItems, setIsImportingItems] = useState<boolean>(false);
+  const [isImportingVouchers, setIsImportingVouchers] = useState<boolean>(false);
 
   // Modals
   const [printingInvoice, setPrintingInvoice] = useState<Invoice | null>(null);
