@@ -71,7 +71,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
 
   return (
     <>
-      <style>{\`
+      <style>{`
         @page { size: A4 portrait; margin: 8mm; }
         @media print {
           html, body { width: 210mm; min-height: 297mm; background: #fff !important; }
@@ -80,7 +80,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
           .tally-pdf-sheet table { page-break-inside: auto; }
           .tally-pdf-sheet tr { page-break-inside: avoid; page-break-after: auto; }
         }
-      \`}</style>
+      `}</style>
     <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto print:p-0 print:bg-white print:static">
       {/* Container */}
       <div className="bg-white rounded-2xl border border-slate-300 shadow-2xl max-w-4xl w-full my-auto overflow-hidden print:shadow-none print:border-none print:max-w-none print:rounded-none">
