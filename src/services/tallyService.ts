@@ -2399,6 +2399,7 @@ export async function performTwoWaySync({
     discoveredParties: 0,
     discoveredItems: 0,
     errors: [],
+    syncExceptions: [],
   };
 
   // Step 1: Query Tally Prime for all Sales Vouchers
@@ -2497,9 +2498,38 @@ export async function performTwoWaySync({
         }
       } else {
         report.errors.push(`Export failed for ${inv.invoiceNo}: ${exportRes.message}`);
+        report.syncExceptions.push({
+          invoice: inv,
+          invoiceNo: inv.invoiceNo,
+          partyName: inv.partyName || 'Unknown Party',
+          itemDetails: inv.items || [],
+          gst: {
+            cgst: inv.totalCgst || 0,
+            sgst: inv.totalSgst || 0,
+            igst: inv.totalIgst || 0,
+            total: inv.totalTax || 0,
+          },
+          grandTotal: inv.grandTotal || 0,
+          reason: exportRes.message,
+        });
       }
     } catch (err: any) {
-      report.errors.push(`Export error for ${inv.invoiceNo}: ${err.message}`);
+      const reason = err?.message || 'Unknown Tally export exception';
+      report.errors.push(`Export error for ${inv.invoiceNo}: ${reason}`);
+      report.syncExceptions.push({
+        invoice: inv,
+        invoiceNo: inv.invoiceNo,
+        partyName: inv.partyName || 'Unknown Party',
+        itemDetails: inv.items || [],
+        gst: {
+          cgst: inv.totalCgst || 0,
+          sgst: inv.totalSgst || 0,
+          igst: inv.totalIgst || 0,
+          total: inv.totalTax || 0,
+        },
+        grandTotal: inv.grandTotal || 0,
+        reason,
+      });
     }
   }
 
