@@ -1510,7 +1510,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
 /**
  * Generates XML for pushing or downloading a Party (Debtor Ledger) into Tally
  */
-export function generateTallyLedgerXML(party: Party): string {
+export function generateTallyLedgerXML(party: Party, action: 'Create' | 'Alter' = 'Create'): string {
   return `<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
@@ -1526,7 +1526,7 @@ export function generateTallyLedgerXML(party: Party): string {
         </DESC>
         <DATA>
             <TALLYMESSAGE xmlns:UDF="TallyUDF">
-                <LEDGER NAME="${xmlEscape(party.name)}" ACTION="Create">
+                <LEDGER NAME="${xmlEscape(party.name)}" ACTION="${action}">
                     <NAME>${xmlEscape(party.name)}</NAME>
                     <PARENT>Sundry Debtors</PARENT>
                     <ISBILLWISEON>Yes</ISBILLWISEON>
@@ -1553,7 +1553,7 @@ export function generateTallyLedgerXML(party: Party): string {
 /**
  * Generates XML for pushing or downloading a Stock Item into Tally Prime
  */
-export function generateTallyStockItemXML(item: StockItem): string {
+export function generateTallyStockItemXML(item: StockItem, action: 'Create' | 'Alter' = 'Create'): string {
   return `<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
@@ -1569,7 +1569,7 @@ export function generateTallyStockItemXML(item: StockItem): string {
         </DESC>
         <DATA>
             <TALLYMESSAGE xmlns:UDF="TallyUDF">
-                <STOCKITEM NAME="${xmlEscape(item.name)}" ACTION="Create">
+                <STOCKITEM NAME="${xmlEscape(item.name)}" ACTION="${action}">
                     <NAME>${xmlEscape(item.name)}</NAME>
                     <BASEUNITS>${xmlEscape(item.unit || 'Nos')}</BASEUNITS>
                     <OPENINGRATE>${item.rate || 0}</OPENINGRATE>
@@ -1589,6 +1589,54 @@ export function generateTallyStockItemXML(item: StockItem): string {
         </DATA>
     </BODY>
 </ENVELOPE>`;
+}
+
+/**
+ * Push a Portal Debtor to the currently open Tally company.
+ * Creates it first; if it already exists, retries as Alter.
+ */
+export async function syncPartyToTally(
+  party: Party,
+  config: TallyConfig = DEFAULT_TALLY_CONFIG
+): Promise<{ success: boolean; message: string; responseXml?: string }> {
+  const createXml = generateTallyLedgerXML(party, 'Create');
+  const first = await sendTallyRequest(createXml, config);
+  const created = /<CREATED>\s*[1-9]\d*\s*<\/CREATED>/i.test(first.text);
+  const errors = /<LINEERROR>|<ERRORS>\s*[1-9]\d*\s*<\/ERRORS>/i.test(first.text);
+  if (created && !errors) return { success: true, message: 'Debtor created in Tally Prime', responseXml: first.text };
+
+  const alterXml = generateTallyLedgerXML(party, 'Alter');
+  const second = await sendTallyRequest(alterXml, config);
+  const altered = /<ALTERED>\s*[1-9]\d*\s*<\/ALTERED>/i.test(second.text);
+  if (altered && !/<LINEERROR>|<ERRORS>\s*[1-9]\d*\s*<\/ERRORS>/i.test(second.text)) {
+    return { success: true, message: 'Debtor updated in Tally Prime', responseXml: second.text };
+  }
+  const line = (second.text.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i) || first.text.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i))?.[1];
+  return { success: false, message: line || 'Tally did not create/update the debtor', responseXml: second.text || first.text };
+}
+
+/**
+ * Push a Portal Stock Item to the currently open Tally company.
+ * Creates it first; if it already exists, retries as Alter.
+ */
+export async function syncStockItemToTally(
+  item: StockItem,
+  config: TallyConfig = DEFAULT_TALLY_CONFIG
+): Promise<{ success: boolean; message: string; responseXml?: string }> {
+  const createXml = generateTallyStockItemXML(item, 'Create');
+  const first = await sendTallyRequest(createXml, config);
+  const created = /<CREATED>\s*[1-9]\d*\s*<\/CREATED>/i.test(first.text);
+  const errors = /<LINEERROR>|<ERRORS>\s*[1-9]\d*\s*<\/ERRORS>/i.test(first.text);
+  if (created && !errors) return { success: true, message: 'Stock Item created in Tally Prime', responseXml: first.text };
+
+  const alterXml = generateTallyStockItemXML(item, 'Alter');
+  const second = await sendTallyRequest(alterXml, config);
+  const altered = /<ALTERED>\s*[1-9]\d*\s*<\/ALTERED>/i.test(second.text);
+  if (altered && !/<LINEERROR>|<ERRORS>\s*[1-9]\d*\s*<\/ERRORS>/i.test(second.text)) {
+    return { success: true, message: 'Stock Item updated in Tally Prime', responseXml: second.text };
+  }
+  const line = (second.text.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i) || first.text.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i))?.[1];
+  return { success: false, message: line || 'Tally did not create/update the stock item', responseXml: second.text || first.text };
 }
 
 /**
