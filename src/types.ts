@@ -115,6 +115,21 @@ export interface Invoice {
   notes?: string;
 }
 
+export interface SyncException {
+  invoice?: Invoice;
+  invoiceNo: string;
+  partyName: string;
+  itemDetails: InvoiceItemRow[];
+  gst: {
+    cgst: number;
+    sgst: number;
+    igst: number;
+    total: number;
+  };
+  grandTotal: number;
+  reason: string;
+}
+
 export interface SyncReport {
   timestamp: string;
   importedCount: number;
@@ -129,6 +144,7 @@ export interface SyncReport {
   discoveredParties: number;
   discoveredItems: number;
   errors: string[];
+  syncExceptions: SyncException[];
 }
 
 export interface SellerInfo {
