@@ -28,6 +28,50 @@ const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || '';
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || 'https://anish-tech.online';
 const MAX_BODY = 10 * 1024 * 1024;
 
+const PORTAL_URL = (process.env.PORTAL_URL || 'https://anish-portal.onrender.com').replace(/\/$/, '');
+const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 2000);
+
+async function pollHostedPortal() {
+  if (!BRIDGE_TOKEN) return;
+  try {
+    const response = await fetch(PORTAL_URL + '/api/tally/poll', {
+      headers: { 'X-Bridge-Token': BRIDGE_TOKEN },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (response.status === 204) return;
+    if (!response.ok) return;
+    const job = await response.json();
+    if (!job?.id || !job?.xml) return;
+    try {
+      const tallyResponse = await fetch(TALLY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/xml;charset=UTF-8' },
+        body: job.xml,
+        signal: AbortSignal.timeout(15000)
+      });
+      const xml = await tallyResponse.text();
+      await fetch(PORTAL_URL + '/api/tally/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': BRIDGE_TOKEN },
+        body: JSON.stringify({ id: job.id, ok: true, status: tallyResponse.status, xml }),
+        signal: AbortSignal.timeout(8000)
+      });
+    } catch (err) {
+      await fetch(PORTAL_URL + '/api/tally/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': BRIDGE_TOKEN },
+        body: JSON.stringify({ id: job.id, ok: false, error: String(err?.message || err) }),
+        signal: AbortSignal.timeout(8000)
+      }).catch(() => {});
+    }
+  } catch (_) {}
+}
+
+setInterval(pollHostedPortal, POLL_INTERVAL_MS);
+setTimeout(pollHostedPortal, 1000);
+
+
+
 function send(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
