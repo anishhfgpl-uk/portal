@@ -17,6 +17,7 @@ interface ItemMasterViewProps {
   stockItems: StockItem[];
   onAddItem: (item: StockItem) => void;
   onUpdateItem: (item: StockItem) => void;
+  onSyncToTally: (item: StockItem) => void;
   onDeleteItem: (id: string) => void;
   onImportFromTally: () => void;
   onOpenXmlPaste: () => void;
@@ -38,6 +39,7 @@ export const ItemMasterView: React.FC<ItemMasterViewProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<StockItem | null>(null);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -192,6 +194,19 @@ export const ItemMasterView: React.FC<ItemMasterViewProps> = ({
             className="hidden"
           />
 
+          <button
+            onClick={() => {
+              filteredItems.forEach((item) => {
+                if (selectedItemIds.has(item.id)) onSyncToTally(item);
+              });
+            }}
+            disabled={selectedItemIds.size === 0}
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Sync only selected items to Tally Prime"
+          >
+            <UploadCloud className="w-3.5 h-3.5" />
+            <span>Sync Selected with Tally</span>
+          </button>
           {/* Add New Item */}
           <button
             onClick={openAddModal}
@@ -238,7 +253,24 @@ export const ItemMasterView: React.FC<ItemMasterViewProps> = ({
             <table className="w-full text-left border-collapse min-w-[750px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
-                  <th className="py-3 px-4">Item Name / Description</th>
+                  <th className="py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={filteredItems.length > 0 && filteredItems.every((item) => selectedItemIds.has(item.id))}
+                        onChange={(e) => {
+                          setSelectedItemIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) filteredItems.forEach((item) => next.add(item.id));
+                            else filteredItems.forEach((item) => next.delete(item.id));
+                            return next;
+                          });
+                        }}
+                        aria-label="Select all visible items"
+                      />
+                      <span>Item Name / Description</span>
+                    </div>
+                  </th>
                   <th className="py-3 px-3">HSN / SAC</th>
                   <th className="py-3 px-3">GST Rate</th>
                   <th className="py-3 px-3">Base Unit</th>
@@ -250,10 +282,26 @@ export const ItemMasterView: React.FC<ItemMasterViewProps> = ({
                 {filteredItems.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-4">
-                      <div className="font-bold text-slate-800">{item.name}</div>
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedItemIds.has(item.id)}
+                          onChange={(e) => setSelectedItemIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(item.id);
+                            else next.delete(item.id);
+                            return next;
+                          })}
+                          aria-label={`Select item ${item.name}`}
+                          className="mt-1"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-800">{item.name}</div>
                       {item.description && (
                         <div className="text-[11px] text-slate-400 truncate max-w-xs">{item.description}</div>
                       )}
+                        </div>
+                      </div>
                     </td>
 
                     <td className="py-3 px-3 font-mono font-semibold text-slate-700">
