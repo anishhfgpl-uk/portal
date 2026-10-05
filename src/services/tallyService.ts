@@ -2498,67 +2498,8 @@ export async function performTwoWaySync({
     }
   });
 
-  // Step 3: Identify Pending Portal Invoices (Not yet in Tally) and Export to Tally
-  const pendingInvoices = mergedInvoices.filter(
-    (inv) =>
-      inv.source !== 'tally_import' &&
-      inv.tallySyncStatus !== 'synced' &&
-      !tallyResult.invoices.some(
-        (ti) => ti.invoiceNo.trim().toLowerCase() === inv.invoiceNo.trim().toLowerCase()
-      )
-  );
-
-  for (const inv of pendingInvoices) {
-    try {
-      const exportRes = await exportInvoiceToTally(inv, tallyConfig, sellerInfo.name);
-      if (exportRes.success) {
-        const idx = mergedInvoices.findIndex((i) => i.id === inv.id);
-        if (idx !== -1) {
-          mergedInvoices[idx] = {
-            ...mergedInvoices[idx],
-            tallySyncStatus: 'synced',
-            tallySyncDate: new Date().toISOString(),
-            isDuplicateProtected: true,
-          };
-          report.exportedCount++;
-          report.exportedInvoices.push(mergedInvoices[idx]);
-        }
-      } else {
-        report.errors.push(`Export failed for ${inv.invoiceNo}: ${exportRes.message}`);
-        report.syncExceptions.push({
-          invoice: inv,
-          invoiceNo: inv.invoiceNo,
-          partyName: inv.partyName || 'Unknown Party',
-          itemDetails: inv.items || [],
-          gst: {
-            cgst: inv.totalCgst || 0,
-            sgst: inv.totalSgst || 0,
-            igst: inv.totalIgst || 0,
-            total: inv.totalTax || 0,
-          },
-          grandTotal: inv.grandTotal || 0,
-          reason: exportRes.message,
-        });
-      }
-    } catch (err: any) {
-      const reason = err?.message || 'Unknown Tally export exception';
-      report.errors.push(`Export error for ${inv.invoiceNo}: ${reason}`);
-      report.syncExceptions.push({
-        invoice: inv,
-        invoiceNo: inv.invoiceNo,
-        partyName: inv.partyName || 'Unknown Party',
-        itemDetails: inv.items || [],
-        gst: {
-          cgst: inv.totalCgst || 0,
-          sgst: inv.totalSgst || 0,
-          igst: inv.totalIgst || 0,
-          total: inv.totalTax || 0,
-        },
-        grandTotal: inv.grandTotal || 0,
-        reason,
-      });
-    }
-  }
+  // Step 3 intentionally does NOT export portal invoices automatically.
+  // Tally export is manual and selection-only from SavedInvoicesView.
 
   report.totalInPortal = mergedInvoices.length;
 
