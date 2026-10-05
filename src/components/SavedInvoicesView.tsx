@@ -30,6 +30,7 @@ import {
   exportInvoiceToTally,
   fetchSalesVouchersFromTally,
   performTwoWaySync,
+  getCurrentFinancialYearRange,
 } from '../services/tallyService';
 import { TallySyncReportModal } from './TallySyncReportModal';
 import { Building2 } from 'lucide-react';
@@ -85,8 +86,16 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
     type: 'success' | 'error' | 'info';
   } | null>(null);
 
+  // Current financial year only: 01-Apr through 31-Mar.
+  const currentFy = getCurrentFinancialYearRange();
+  const isCurrentFyInvoice = (inv: Invoice) => {
+    const date = (inv.invoiceDate || '').slice(0, 10);
+    return date >= currentFy.start && date <= currentFy.end;
+  };
+
   // Invoices filtered by company
   const companyScopedInvoices = invoices.filter((inv) => {
+    if (!isCurrentFyInvoice(inv)) return false;
     if (companyFilterMode === 'all') return true;
     if (inv.sellerGstin && sellerInfo.gstin) {
       return inv.sellerGstin.trim().toLowerCase() === sellerInfo.gstin.trim().toLowerCase();
@@ -124,7 +133,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
     try {
       const result = await performTwoWaySync({
-        portalInvoices: invoices,
+        portalInvoices: invoices.filter(isCurrentFyInvoice),
         sellerInfo,
         tallyConfig,
       });
@@ -171,7 +180,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
       // De-duplicate against existing invoices
       const existingMap = new Map<string, Invoice>();
-      invoices.forEach((inv) => {
+      invoices.filter(isCurrentFyInvoice).forEach((inv) => {
         existingMap.set(inv.invoiceNo.trim().toLowerCase(), inv);
       });
 
@@ -326,7 +335,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
   // 4. Download Batch XML for Pending Invoices
   const handleDownloadBatchXml = () => {
-    const toExport = pendingInvoices.length > 0 ? pendingInvoices : invoices;
+    const toExport = pendingInvoices.length > 0 ? pendingInvoices : companyScopedInvoices;
     if (toExport.length === 0) {
       setActionMessage({ text: 'No invoices available to download XML.', type: 'info' });
       return;
@@ -560,7 +569,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               onClick={handleTwoWaySmartSync}
               disabled={isTwoWaySyncing}
               className="flex items-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-blue-500/20 transition cursor-pointer disabled:opacity-50"
-              title="Pull latest Tally invoices, deduplicate, and push pending portal invoices"
+              title="Import current financial year invoices from Tally and prevent duplicates"
             >
               <RefreshCw className={`w-4 h-4 ${isTwoWaySyncing ? 'animate-spin' : ''}`} />
               <span>{isTwoWaySyncing ? 'Syncing...' : '2-Way Smart Sync'}</span>
