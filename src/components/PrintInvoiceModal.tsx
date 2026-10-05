@@ -21,10 +21,6 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
     window.print();
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   const handleDownloadXml = () => {
     const xml = generateTallySalesVoucherXML(invoice);
     const blob = new Blob([xml], { type: 'text/xml;charset=utf-8;' });
