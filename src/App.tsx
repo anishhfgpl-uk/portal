@@ -19,6 +19,8 @@ import {
   fetchDebtorsFromTally,
   fetchStockItemsFromTally,
   fetchAccountingVouchersFromTally,
+  syncPartyToTally,
+  syncStockItemToTally,
 } from './services/tallyService';
 import { fetchCompaniesFromTally } from './services/tallyCompanyImportService';
 import { getStateCodeByName } from './utils/gstUtils';
@@ -872,6 +874,16 @@ export default function App() {
   const handleUpdateParty = (party: Party) => {
     setParties((prev) => prev.map((p) => (p.id === party.id ? party : p)));
   };
+  const handleSyncPartyToTally = async (party: Party) => {
+    setImportStatus({ message: 'Sending debtor to Tally Prime...', type: 'loading' });
+    try {
+      const result = await syncPartyToTally(party, tallyConfig);
+      setImportStatus({ message: result.success ? '✅ ' + result.message + ': ' + party.name : '❌ Debtor sync failed: ' + result.message, type: result.success ? 'success' : 'error' });
+    } catch (err: any) {
+      setImportStatus({ message: '❌ Debtor sync failed: ' + (err?.message || 'Tally connection error'), type: 'error' });
+    }
+  };
+
   const handleDeleteParty = (id: string) => {
     if (confirm('Are you sure you want to delete this party?')) {
       setParties((prev) => prev.filter((p) => p.id !== id));
@@ -885,6 +897,16 @@ export default function App() {
   const handleUpdateItem = (item: StockItem) => {
     setStockItems((prev) => prev.map((i) => (i.id === item.id ? item : i)));
   };
+  const handleSyncItemToTally = async (item: StockItem) => {
+    setImportStatus({ message: 'Sending stock item to Tally Prime...', type: 'loading' });
+    try {
+      const result = await syncStockItemToTally(item, tallyConfig);
+      setImportStatus({ message: result.success ? '✅ ' + result.message + ': ' + item.name : '❌ Item sync failed: ' + result.message, type: result.success ? 'success' : 'error' });
+    } catch (err: any) {
+      setImportStatus({ message: '❌ Item sync failed: ' + (err?.message || 'Tally connection error'), type: 'error' });
+    }
+  };
+
   const handleDeleteItem = (id: string) => {
     if (confirm('Are you sure you want to delete this stock item?')) {
       setStockItems((prev) => prev.filter((i) => i.id !== id));
@@ -1084,6 +1106,7 @@ export default function App() {
               parties={parties}
               onAddParty={handleAddParty}
               onUpdateParty={handleUpdateParty}
+              onSyncToTally={handleSyncPartyToTally}
               onDeleteParty={handleDeleteParty}
               onImportFromTally={handleImportDebtorsFromTally}
               onOpenXmlPaste={() => setIsXmlPasteOpen(true)}
@@ -1097,6 +1120,7 @@ export default function App() {
               stockItems={stockItems}
               onAddItem={handleAddItem}
               onUpdateItem={handleUpdateItem}
+              onSyncToTally={handleSyncItemToTally}
               onDeleteItem={handleDeleteItem}
               onImportFromTally={handleImportItemsFromTally}
               onOpenXmlPaste={() => setIsXmlPasteOpen(true)}
