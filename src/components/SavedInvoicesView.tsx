@@ -212,6 +212,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
         discoveredParties: result.extractedParties.length,
         discoveredItems: result.extractedItems.length,
         errors: [],
+        syncExceptions: [],
       };
 
       setSyncReport(report);
@@ -243,6 +244,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
     setActionMessage(null);
     const exportedList: Invoice[] = [];
     const errors: string[] = [];
+    const syncExceptions: SyncReport['syncExceptions'] = [];
     let updatedInvoices = [...invoices];
 
     for (const inv of selected) {
@@ -259,9 +261,38 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
           updatedInvoices = updatedInvoices.map((i) => (i.id === inv.id ? syncedInv : i));
         } else {
           errors.push(inv.invoiceNo + ': ' + res.message);
+          syncExceptions.push({
+            invoice: inv,
+            invoiceNo: inv.invoiceNo,
+            partyName: inv.partyName || 'Unknown Party',
+            itemDetails: inv.items || [],
+            gst: {
+              cgst: inv.totalCgst || 0,
+              sgst: inv.totalSgst || 0,
+              igst: inv.totalIgst || 0,
+              total: inv.totalTax || 0,
+            },
+            grandTotal: inv.grandTotal || 0,
+            reason: res.message,
+          });
         }
       } catch (err: any) {
-        errors.push(inv.invoiceNo + ': ' + err.message);
+        const reason = err?.message || 'Unknown Tally exception';
+        errors.push(inv.invoiceNo + ': ' + reason);
+        syncExceptions.push({
+          invoice: inv,
+          invoiceNo: inv.invoiceNo,
+          partyName: inv.partyName || 'Unknown Party',
+          itemDetails: inv.items || [],
+          gst: {
+            cgst: inv.totalCgst || 0,
+            sgst: inv.totalSgst || 0,
+            igst: inv.totalIgst || 0,
+            total: inv.totalTax || 0,
+          },
+          grandTotal: inv.grandTotal || 0,
+          reason,
+        });
       }
     }
 
@@ -281,6 +312,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
       discoveredParties: 0,
       discoveredItems: 0,
       errors,
+      syncExceptions,
     });
     setIsReportModalOpen(true);
     setActionMessage({
