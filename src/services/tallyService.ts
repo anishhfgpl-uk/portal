@@ -8,6 +8,25 @@ import {
   numberToIndianWords,
 } from '../utils/gstUtils';
 
+
+/** Current Indian financial year (1 April to 31 March). */
+export function getCurrentFinancialYearRange(now = new Date()): { start: string; end: string } {
+  const year = now.getFullYear();
+  const startYear = now.getMonth() >= 3 ? year : year - 1;
+  return {
+    start: `${startYear}-04-01`,
+    end: `${startYear + 1}-03-31`,
+  };
+}
+
+function isDateInCurrentFinancialYear(dateValue: string, now = new Date()): boolean {
+  const range = getCurrentFinancialYearRange(now);
+  const normalized = (dateValue || '').trim();
+  if (!normalized) return false;
+  const iso = normalized.includes('T') ? normalized.slice(0, 10) : normalized;
+  return iso >= range.start && iso <= range.end;
+}
+
 export const DEFAULT_TALLY_CONFIG: TallyConfig = {
   tallyUrl: 'https://tally-bridge.anish-tech.online',
   proxyMode: true,
@@ -2179,8 +2198,9 @@ export async function fetchSalesVouchersFromTally(
       const res = await sendTallyRequest(xmlQuery, config);
       if (res && res.text && res.text.trim()) {
         const parsed = parseSalesVouchersXML(res.text, sellerInfo);
-        if (parsed.invoices.length > 0) {
-          return parsed;
+        const currentFyInvoices = parsed.invoices.filter((invoice) => isDateInCurrentFinancialYear(invoice.invoiceDate));
+        if (currentFyInvoices.length > 0) {
+          return { ...parsed, invoices: currentFyInvoices };
         }
       }
     } catch (err: any) {
@@ -2203,6 +2223,13 @@ export async function exportInvoiceToTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG,
   companyName = ''
 ): Promise<{ success: boolean; message: string; responseXml?: string }> {
+  if (!isDateInCurrentFinancialYear(invoice.invoiceDate)) {
+    return {
+      success: false,
+      message: 'Invoice current financial year (01-Apr to 31-Mar) ke bahar hai. Tally sync blocked.',
+    };
+  }
+
   const xml = generateTallySalesVoucherXML(invoice, companyName || config.companyName || '');
   const res = await sendTallyRequest(xml, config);
 
