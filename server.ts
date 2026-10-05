@@ -21,6 +21,14 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() })
   );
 
+  // Outbound office polling fallback: the office connector polls this hosted endpoint.
+  const pendingBridgeRequests = new Map<string, { xml: string; resolve: (value: any) => void }>();
+  const bridgeQueue: string[] = [];
+  const bridgeTokenMatches = (req: any) => {
+    const configured = process.env.TALLY_BRIDGE_TOKEN?.trim() || "";
+    const supplied = String(req.headers["x-bridge-token"] || req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+    return Boolean(configured && supplied && configured === supplied);
+  };
   const getTallyTarget = () => {
     const localTallyUrl = "http://127.0.0.1:9000";
     const bridgeUrl = (process.env.TALLY_BRIDGE_URL || "https://tally-bridge.anish-tech.online").replace(/\/$/, "");
@@ -99,18 +107,59 @@ async function startServer() {
       });
     } catch (fetchErr: any) {
       clearTimeout(timeoutId);
-      const isTimeout = fetchErr?.name === "AbortError";
-      const displayUrl = bridgeUrl ? `${bridgeUrl}/tally` : localTallyUrl;
 
+      const requestId = "tally-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+      const bridgeResult = await new Promise<any>((resolve) => {
+        pendingBridgeRequests.set(requestId, { xml: xmlBody, resolve });
+        bridgeQueue.push(requestId);
+        setTimeout(() => {
+          const item = pendingBridgeRequests.get(requestId);
+          if (item) {
+            pendingBridgeRequests.delete(requestId);
+            item.resolve({ ok: false, error: "Office connector did not respond within 55s." });
+          }
+        }, 55000);
+      });
+
+      if (bridgeResult?.ok && bridgeResult.xml) {
+        return res.status(200).json({ success: true, status: bridgeResult.status || 200, xml: bridgeResult.xml, via: "office-poll" });
+      }
+
+      const isTimeout = fetchErr?.name === "AbortError";
+      const displayUrl = bridgeUrl ? bridgeUrl + "/tally" : localTallyUrl;
       return res.status(502).json({
         success: false,
-        error: isTimeout
-          ? `Connection to Tally bridge/office at ${displayUrl} timed out after 45s.`
-          : `Failed to connect to Tally bridge/office at ${displayUrl}: ${fetchErr?.message || "Unknown error"}`,
+        error: bridgeResult?.error || (isTimeout
+          ? "Connection to Tally bridge/office at " + displayUrl + " timed out after 45s and office fallback did not respond."
+          : "Failed to connect to Tally bridge/office at " + displayUrl + ": " + (fetchErr?.message || "Unknown error")),
         code: fetchErr?.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
       });
     }
   };
+
+  app.get("/api/tally/poll", (req, res) => {
+    if (!bridgeTokenMatches(req)) return res.status(401).json({ ok: false, error: "Bridge authentication required" });
+    const id = bridgeQueue.shift();
+    if (!id) return res.status(204).end();
+    const item = pendingBridgeRequests.get(id);
+    if (!item) return res.status(204).end();
+    return res.json({ ok: true, id, xml: item.xml });
+  });
+
+  app.post("/api/tally/respond", (req, res) => {
+    if (!bridgeTokenMatches(req)) return res.status(401).json({ ok: false, error: "Bridge authentication required" });
+    const id = String(req.body?.id || "");
+    const item = pendingBridgeRequests.get(id);
+    if (!id || !item) return res.status(404).json({ ok: false, error: "Request not found or expired" });
+    pendingBridgeRequests.delete(id);
+    item.resolve({
+      ok: Boolean(req.body?.ok),
+      status: Number(req.body?.status || 200),
+      xml: String(req.body?.xml || ""),
+      error: String(req.body?.error || "")
+    });
+    return res.json({ ok: true });
+  });
 
   const tallyProxy = async (req: any, res: any) => {
     try {
