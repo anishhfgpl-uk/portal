@@ -9,6 +9,7 @@ import {
   Trash2,
   Edit2,
   CheckCircle2,
+  UploadCloud,
   AlertCircle,
   Building,
   RefreshCw,
@@ -33,6 +34,7 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
   parties,
   onAddParty,
   onUpdateParty,
+  onSyncToTally,
   onDeleteParty,
   onImportFromTally,
   onOpenXmlPaste,
@@ -331,6 +333,13 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
 
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-center space-x-1.5">
+                        <button
+                          onClick={() => onSyncToTally(party)}
+                          title="Sync to Tally Prime"
+                          className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition cursor-pointer"
+                        >
+                          <UploadCloud className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => handleExportPartyXml(party)}
                           title="Export Tally Ledger XML"
