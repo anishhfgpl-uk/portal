@@ -1366,38 +1366,39 @@ export function parseCompaniesXML(xmlInput: string | Document): SellerInfo[] {
  * Generates standard Tally Prime Sales Voucher XML for seamless import
  */
 export function generateTallySalesVoucherXML(invoice: Invoice, companyName = ''): string {
-  // Format date YYYYMMDD for Tally
-  const cleanDate = invoice.invoiceDate.replace(/[-/]/g, '');
-  const voucherDate = cleanDate.length === 8 ? cleanDate : new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // Tally Prime Item Invoice / Accounting Invoice mode.
+  const rawDate = (invoice.invoiceDate || '').replace(/[^0-9]/g, '');
+  const voucherDate = rawDate.length === 8
+    ? rawDate
+    : new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-  const isInterState = invoice.isInterState;
-  
-  // Build inventory / ledger rows for XML
-  const inventoryEntriesXML = invoice.items
-    .map(item => {
-      const rate = item.rate || 0;
-      const qty = item.qty || 1;
-      const amount = -(item.taxableAmount || 0); // Credit in Sales Voucher
+  const isInterState = Boolean(invoice.isInterState);
 
-      return `
+  // One inventory row per portal invoice item. Each row carries stock item,
+  // quantity, rate and taxable amount, so Tally opens it as an Item Invoice.
+  const inventoryEntriesXML = (invoice.items || []).map(item => {
+    const qty = Number(item.qty) || 1;
+    const rate = Number(item.rate) || 0;
+    const amount = Number(item.taxableAmount) || (qty * rate);
+    const unit = item.unit || 'Nos';
+
+    return `
         <ALLINVENTORYENTRIES.LIST>
             <STOCKITEMNAME>${xmlEscape(item.name)}</STOCKITEMNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <ISLASTDEEMEDPOSITIVE>No</ISLASTDEEMEDPOSITIVE>
-            <RATE>${rate.toFixed(2)}/${xmlEscape(item.unit || 'Nos')}</RATE>
-            <ACTUALQTY>${qty} ${xmlEscape(item.unit || 'Nos')}</ACTUALQTY>
-            <BILLEDQTY>${qty} ${xmlEscape(item.unit || 'Nos')}</BILLEDQTY>
-            <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+            <RATE>${rate.toFixed(2)}/${xmlEscape(unit)}</RATE>
+            <ACTUALQTY>${qty} ${xmlEscape(unit)}</ACTUALQTY>
+            <BILLEDQTY>${qty} ${xmlEscape(unit)}</BILLEDQTY>
+            <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
             <ACCOUNTINGALLOCATIONS.LIST>
                 <LEDGERNAME>Sales Account</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+                <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
             </ACCOUNTINGALLOCATIONS.LIST>
         </ALLINVENTORYENTRIES.LIST>`;
-    })
-    .join('\n');
+  }).join('\\n');
 
-  // Additional Charges / Expense Ledgers
   let additionalExpensesXML = '';
   if (invoice.freightAmount && invoice.freightAmount > 0) {
     additionalExpensesXML += `
@@ -1425,7 +1426,6 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         </LEDGERENTRIES.LIST>`;
   }
 
-  // Tax ledger entries
   let taxEntriesXML = '';
   if (isInterState) {
     if (invoice.totalIgst > 0) {
@@ -1455,7 +1455,6 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     }
   }
 
-  // Round off entry if any
   let roundOffXML = '';
   if (invoice.roundOff !== 0) {
     roundOffXML = `
@@ -1484,6 +1483,9 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
                 <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
                     <DATE>${voucherDate}</DATE>
                     <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+                    <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
+                    <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
+                    <OBJVIEW>Invoice Voucher View</OBJVIEW>
                     <VOUCHERNUMBER>${xmlEscape(invoice.invoiceNo)}</VOUCHERNUMBER>
                     <REFERENCE>${xmlEscape(invoice.invoiceNo)}</REFERENCE>
                     <PARTYLEDGERNAME>${xmlEscape(invoice.partyName)}</PARTYLEDGERNAME>
@@ -1494,8 +1496,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
                     <COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>
                     <ISINVOICE>Yes</ISINVOICE>
                     <NARRATION>${xmlEscape(invoice.notes || `Tax Invoice ${invoice.invoiceNo}`)}</NARRATION>
-                    
-                    <!-- Debtor Debit Entry -->
+
                     <LEDGERENTRIES.LIST>
                         <LEDGERNAME>${xmlEscape(invoice.partyName)}</LEDGERNAME>
                         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -1507,17 +1508,10 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
                             <AMOUNT>${invoice.grandTotal.toFixed(2)}</AMOUNT>
                         </BILLALLOCATIONS.LIST>
                     </LEDGERENTRIES.LIST>
-                    
-                    <!-- Inventory Entries with Sales Account Credit -->
+
                     ${inventoryEntriesXML}
-                    
-                    <!-- Additional Charges / Expenses (Freight, Labour, etc.) -->
                     ${additionalExpensesXML}
-                    
-                    <!-- GST Tax Ledgers -->
                     ${taxEntriesXML}
-                    
-                    <!-- Round Off -->
                     ${roundOffXML}
                 </VOUCHER>
             </TALLYMESSAGE>
@@ -1525,7 +1519,6 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     </BODY>
 </ENVELOPE>`;
 }
-
 /**
  * Generates XML for pushing or downloading a Party (Debtor Ledger) into Tally
  */
