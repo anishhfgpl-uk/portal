@@ -23,6 +23,7 @@ interface PartyMasterViewProps {
   parties: Party[];
   onAddParty: (party: Party) => void;
   onUpdateParty: (party: Party) => void;
+  onSyncToTally: (party: Party) => void;
   onDeleteParty: (id: string) => void;
   onImportFromTally: () => void;
   onOpenXmlPaste: () => void;
@@ -44,6 +45,7 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingParty, setEditingParty] = useState<Party | null>(null);
+  const [selectedPartyIds, setSelectedPartyIds] = useState<Set<string>>(new Set());
 
   // File upload ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -241,6 +243,20 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
             className="hidden"
           />
 
+          <button
+            onClick={() => {
+              filteredParties.forEach((party) => {
+                if (selectedPartyIds.has(party.id)) onSyncToTally(party);
+              });
+            }}
+            disabled={selectedPartyIds.size === 0}
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Sync only selected parties to Tally Prime"
+          >
+            <UploadCloud className="w-3.5 h-3.5" />
+            <span>Sync Selected with Tally</span>
+          </button>
+
           {/* Add New Debtor */}
           <button
             onClick={openAddModal}
@@ -287,7 +303,24 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
             <table className="w-full text-left border-collapse min-w-[850px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
-                  <th className="py-3 px-4">Party / Customer Name</th>
+                  <th className="py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={filteredParties.length > 0 && filteredParties.every((party) => selectedPartyIds.has(party.id))}
+                        onChange={(e) => {
+                          setSelectedPartyIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) filteredParties.forEach((party) => next.add(party.id));
+                            else filteredParties.forEach((party) => next.delete(party.id));
+                            return next;
+                          });
+                        }}
+                        aria-label="Select all visible parties"
+                      />
+                      <span>Party / Customer Name</span>
+                    </div>
+                  </th>
                   <th className="py-3 px-3">GSTIN</th>
                   <th className="py-3 px-3">State</th>
                   <th className="py-3 px-3">Mobile / Phone</th>
@@ -300,8 +333,24 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
                 {filteredParties.map((party) => (
                   <tr key={party.id} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-4">
-                      <div className="font-bold text-slate-800">{party.name}</div>
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedPartyIds.has(party.id)}
+                          onChange={(e) => setSelectedPartyIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(party.id);
+                            else next.delete(party.id);
+                            return next;
+                          })}
+                          aria-label={`Select party ${party.name}`}
+                          className="mt-1"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-800">{party.name}</div>
                       {party.pan && <div className="font-mono text-[10px] text-slate-400">PAN: {party.pan}</div>}
+                        </div>
+                      </div>
                     </td>
 
                     <td className="py-3 px-3 font-mono font-semibold text-slate-700">
