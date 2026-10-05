@@ -129,6 +129,52 @@ export const TallySyncReportModal: React.FC<TallySyncReportModalProps> = ({
             </div>
           )}
 
+          {/* Invoice Exception Details */}
+          {report.syncExceptions && report.syncExceptions.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                <span>Invoice Sync Exceptions ({report.syncExceptions.length})</span>
+              </h4>
+              {report.syncExceptions.map((ex, idx) => (
+                <div key={idx} className="border border-rose-200 bg-rose-50/60 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold font-mono text-rose-800">{ex.invoiceNo}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">EXCEPTION</span>
+                      </div>
+                      <div className="text-sm font-bold text-slate-800 mt-1">Party: {ex.partyName}</div>
+                    </div>
+                    {ex.invoice && onViewInvoice && (
+                      <button onClick={() => onViewInvoice(ex.invoice!)} className="px-3 py-1.5 bg-white border border-rose-200 rounded-lg text-[11px] font-bold text-rose-700 hover:bg-rose-100">
+                        View Invoice
+                      </button>
+                    )}
+                  </div>
+                  <div className="bg-white border border-rose-100 rounded-lg overflow-hidden">
+                    <div className="px-3 py-2 text-[10px] font-bold uppercase text-slate-500 bg-slate-50">Item Details</div>
+                    <div className="divide-y divide-slate-100">
+                      {ex.itemDetails.length > 0 ? ex.itemDetails.map((item) => (
+                        <div key={item.id} className="px-3 py-2 flex items-center justify-between text-[11px]">
+                          <div className="font-semibold text-slate-800">{item.name}</div>
+                          <div className="text-slate-600">Qty {item.qty} × ₹{item.rate.toLocaleString('en-IN')} • GST {item.gstRate}% • Tax ₹{item.taxableAmount.toLocaleString('en-IN')}</div>
+                        </div>
+                      )) : <div className="px-3 py-2 text-[11px] text-slate-500">No item rows were available.</div>}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                    <div className="bg-white rounded-lg border border-slate-100 p-2"><span className="text-slate-500">CGST</span><div className="font-bold">₹{ex.gst.cgst.toLocaleString('en-IN')}</div></div>
+                    <div className="bg-white rounded-lg border border-slate-100 p-2"><span className="text-slate-500">SGST</span><div className="font-bold">₹{ex.gst.sgst.toLocaleString('en-IN')}</div></div>
+                    <div className="bg-white rounded-lg border border-slate-100 p-2"><span className="text-slate-500">IGST</span><div className="font-bold">₹{ex.gst.igst.toLocaleString('en-IN')}</div></div>
+                    <div className="bg-white rounded-lg border border-slate-100 p-2"><span className="text-slate-500">Invoice Total</span><div className="font-bold">₹{ex.grandTotal.toLocaleString('en-IN')}</div></div>
+                  </div>
+                  <div className="text-[11px] text-rose-800 bg-white border border-rose-200 rounded-lg p-2.5"><strong>Reason:</strong> {ex.reason}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Error Warnings */}
           {report.errors.length > 0 && (
             <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
