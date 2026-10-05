@@ -20,6 +20,7 @@ import {
   fetchStockItemsFromTally,
   fetchAccountingVouchersFromTally,
 } from './services/tallyService';
+import { fetchCompaniesFromTally } from './services/tallyCompanyImportService';
 import { getStateCodeByName } from './utils/gstUtils';
 
 // Seed sample company data (Default: Anish Technologies)
@@ -181,6 +182,34 @@ function readStoredJson<T>(key: string, fallback: T, validate?: (value: unknown)
 }
 
 const isArray = (value: unknown): boolean => Array.isArray(value);
+
+const isDemoCompany = (company: SellerInfo | null | undefined): boolean => {
+  const name = String(company?.name || '').trim().toLowerCase();
+  const gstin = String(company?.gstin || '').trim().toLowerCase();
+  return (
+    name === 'anish technologies pvt ltd' ||
+    name === 'apex industrial solutions' ||
+    gstin === '07aabca1234f1z5' ||
+    gstin === '27aabca9876e1z2'
+  );
+};
+
+const EMPTY_SELLER_INFO: SellerInfo = {
+  id: 'no-company-selected',
+  name: '',
+  tradeName: '',
+  mailingName: '',
+  gstin: '',
+  state: '',
+  stateCode: '',
+  address: '',
+  phone: '',
+  mobile: '',
+  email: '',
+  country: 'India',
+  currencySymbol: '₹',
+  currencyFormalName: 'INR',
+};
 
 const SAMPLE_INVOICES_SEED: Invoice[] = [
   {
@@ -497,19 +526,14 @@ export default function App() {
     readStoredJson<Invoice[]>('tally_invoices', SAMPLE_INVOICES_SEED, isArray)
   );
 
-  const [companies, setCompanies] = useState<SellerInfo[]>(() =>
-    readStoredJson<SellerInfo[]>('tally_companies', INITIAL_COMPANIES, isArray)
-  );
+  const [companies, setCompanies] = useState<SellerInfo[]>(() => {
+    const saved = readStoredJson<SellerInfo[]>('tally_companies', [], isArray);
+    return saved.filter((company) => !isDemoCompany(company));
+  });
 
   const [sellerInfo, setSellerInfo] = useState<SellerInfo>(() => {
-    const saved = localStorage.getItem('tally_seller_info');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.name) return parsed;
-      } catch (e) {}
-    }
-    return INITIAL_COMPANIES[0];
+    const saved = readStoredJson<SellerInfo | null>('tally_seller_info', null);
+    return saved && saved.name && !isDemoCompany(saved) ? saved : EMPTY_SELLER_INFO;
   });
 
   const [tallyVouchers, setTallyVouchers] = useState<TallyVoucher[]>(() => {
@@ -605,7 +629,8 @@ export default function App() {
     localStorage.setItem('tally_vouchers', JSON.stringify(tallyVouchers));
   }, [tallyVouchers]);
 
-  // Initial connection check on mount
+  // On startup, verify the office bridge and immediately replace any demo company
+  // with the exact company currently OPEN in Tally Prime.
   useEffect(() => {
     handleTestConnection();
   }, []);
@@ -621,9 +646,44 @@ export default function App() {
     if (isConnected) {
       setTallyStatus('online');
       setImportStatus({
-        message: '🟢 Office Tally bridge is Online — Tally Prime connected',
-        type: 'success',
+        message: '🟢 Office Tally bridge is Online — detecting current Tally company...',
+        type: 'loading',
       });
+
+      try {
+        const importedCompanies = await fetchCompaniesFromTally(tallyConfig);
+        const actualCompanies = importedCompanies.filter((company) => !isDemoCompany(company));
+        if (actualCompanies.length > 0) {
+          const activeCompany = actualCompanies[0];
+          setCompanies(actualCompanies);
+          setSellerInfo(activeCompany);
+          setTallyConfig((prev) => ({
+            ...prev,
+            companyName: activeCompany.name,
+            financialYear: activeCompany.financialYearFrom
+              ? (() => {
+                  const from = activeCompany.financialYearFrom.replace(/[-/]/g, '');
+                  const year = from.length >= 4 ? Number(from.slice(0, 4)) : NaN;
+                  return Number.isFinite(year) ? year + '-' + (year + 1) : (prev.financialYear || '2025-2026');
+                })()
+              : (prev.financialYear || '2025-2026'),
+          }));
+          setImportStatus({
+            message: '🟢 Tally connected — actual OPEN company imported: ' + activeCompany.name,
+            type: 'success',
+          });
+        } else {
+          setImportStatus({
+            message: '🟢 Tally connected, but no actual company profile was returned.',
+            type: 'error',
+          });
+        }
+      } catch (companyErr: any) {
+        setImportStatus({
+          message: '🟢 Tally connected, but company profile import failed: ' + (companyErr?.message || 'Unknown error'),
+          type: 'error',
+        });
+      }
     } else {
       setTallyStatus('offline');
       setImportStatus({
