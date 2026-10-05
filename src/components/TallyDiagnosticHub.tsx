@@ -87,7 +87,7 @@ export const TallyDiagnosticHub: React.FC<TallyDiagnosticHubProps> = ({
     setTimeout(() => setCopiedScript(null), 2500);
   };
 
-  const nodeBridgeScript = `The legacy local CORS bridge on port 9001 is disabled.
+  const nodeBridgeScript = `ANISH TECHNOLOGIES PORTAL — Tally Office Connector v2.\n\nThe legacy local CORS bridge on port 9001 is disabled.
 
 Use the secure Office Connector installer from this portal instead.
 It connects Office Tally Prime (127.0.0.1:9000) to the hosted portal
@@ -117,8 +117,8 @@ pause`;
 
   const downloadOfficeConnector = () => {
     const a = document.createElement('a');
-    a.href = '/portal/Anish-Tally-Connector-Installer.ps1';
-    a.download = 'Anish-Tally-Connector-Installer.ps1';
+    a.href = '/portal/Anish-Portal-Tally-Connector-Installer.ps1';
+    a.download = 'Anish-Portal-Tally-Connector-Installer.ps1';
     document.body.appendChild(a);
     a.click();
     a.remove();
