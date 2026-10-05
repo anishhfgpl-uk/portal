@@ -6,6 +6,7 @@ import {
   ArrowDownToLine,
   FileCode,
   Upload,
+  UploadCloud,
   Trash2,
   Edit2,
   Sparkles,
