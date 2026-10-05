@@ -118,13 +118,8 @@ const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
 </ENVELOPE>`;
 
 const CURRENT_COMPANY_XML = `<ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyName</ID></HEADER>
-  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE>
-    <COLLECTION NAME="CurrentCompanyName" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes">
-      <TYPE>Company</TYPE><FETCH>NAME</FETCH><FILTER>CurrentCompanyFilter</FILTER>
-    </COLLECTION>
-    <SYSTEM TYPE="Formulae" NAME="CurrentCompanyFilter">$IsEqual:$Name:##SVCurrentCompany</SYSTEM>
-  </TDLMESSAGE></TDL></DESC></BODY>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>CompanyInfo</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY>
 </ENVELOPE>`;
 
 const COMPANY_OBJECT_XML = (companyName: string) => {
@@ -132,7 +127,17 @@ const COMPANY_OBJECT_XML = (companyName: string) => {
   return `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Object</TYPE><SUBTYPE>Company</SUBTYPE><ID TYPE="Name">${escaped}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>${escaped}</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><FETCHLIST><FETCH>*</FETCH></FETCHLIST></DESC></BODY></ENVELOPE>`;
 };
 
-const COMPANY_XML_FALLBACK = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVIsSimpleCompany>No</SVIsSimpleCompany><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No" NAME="List of Companies"><TYPE>Company</TYPE><NATIVEMETHOD>*</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+const COMPANY_XML_FALLBACK = `<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CompanyProfileCollection</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+    <TDL><TDLMESSAGE>
+      <COLLECTION NAME="CompanyProfileCollection" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes">
+        <TYPE>Company</TYPE>
+        <FETCH>NAME, MAILINGNAME, BASICCOMPANYFORMALNAME, ADDRESS, STATENAME, COUNTRYNAME, PINCODE, PHONENUMBER, MOBILENUMBER, TELEPHONENUMBER, EMAIL, EMAILID, WEBSITE, GSTIN, PARTYGSTIN, VATREGISTRATIONNO, PANNUMBER, INCOMETAXNUMBER, STARTINGFROM, ENDINGAT, BOOKSFROM, CURRENCYSYMBOL, CURRENCYFORMALNAME, BANKNAME, BANKACCOUNTNUMBER, IFSCODE, GUID</FETCH>
+      </COLLECTION>
+    </TDLMESSAGE></TDL>
+  </DESC></BODY>
+</ENVELOPE>`;
 
 function currentCompanyName(xml: string): string {
   const doc = parseDocument(xml);
@@ -186,57 +191,68 @@ async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ 
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  // IMPORTANT: Tally's standard "List of Companies" export is known to return
-  // <COMPANY NAME="..."><NAME>...</NAME>... and is the most reliable way to
-  // discover the active company on the office installation. Do this FIRST.
-  // The old custom CurrentCompanyDetails/Object sequence could return an empty
-  // Company master even when Tally itself was healthy.
+  // Tally CompanyInfo gives the authoritative name of the company that is open.
   let openName = '';
+  try {
+    const info = await requestCompanyTally(CURRENT_COMPANY_XML, config);
+    openName = currentCompanyName(info.text);
+  } catch (err) {
+    console.warn('Tally CompanyInfo query failed:', err);
+  }
 
+  // Fetch only the active company. Never assume the first company in a
+  // multi-company response is the currently open company.
+  if (openName) {
+    try {
+      const detail = await requestCompanyTally(COMPANY_OBJECT_XML(openName), config);
+      const companies = parseCompanyXml(detail.text);
+      if (companies.length) {
+        const exact = companies.filter(c => c.name.trim().toLowerCase() === openName.trim().toLowerCase());
+        return exact.length ? exact : [companies[0]];
+      }
+    } catch (err) {
+      console.warn('Active company object query failed:', err);
+    }
+
+    // Compatibility path: explicitly bind SVCURRENTCOMPANY for Tally builds
+    // where Object/Company export is unavailable.
+    try {
+      const escaped = openName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const masterXml = CURRENT_COMPANY_MASTER_XML.replace(
+        '<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>',
+        '<SVCURRENTCOMPANY>' + escaped + '</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>'
+      );
+      const master = await requestCompanyTally(masterXml, config);
+      const companies = parseCompanyXml(master.text);
+      if (companies.length) {
+        const exact = companies.filter(c => c.name.trim().toLowerCase() === openName.trim().toLowerCase());
+        return exact.length ? exact : [companies[0]];
+      }
+    } catch (err) {
+      console.warn('Active company collection query failed:', err);
+    }
+  }
+
+  // Last fallback for older/custom Tally responses.
   try {
     const fallback = await requestCompanyTally(COMPANY_XML_FALLBACK, config);
     const companies = parseCompanyXml(fallback.text);
     if (companies.length) {
-      // Prefer the configured/current company if the caller has one, otherwise
-      // return the complete list exactly as Tally returned it.
-      const wanted = clean(config.companyName || '');
+      const wanted = clean(openName || config.companyName || '');
       if (wanted) {
-        const exact = companies.filter(c => c.name.toLowerCase() === wanted.toLowerCase());
+        const exact = companies.filter(c => c.name.trim().toLowerCase() === wanted.trim().toLowerCase());
         if (exact.length) return exact;
       }
       return companies;
     }
   } catch (err) {
-    console.warn('Standard Tally company list query failed:', err);
-  }
-
-  // Secondary path: ask Tally for the Company master filtered to the current company.
-  try {
-    const master = await requestCompanyTally(CURRENT_COMPANY_MASTER_XML, config);
-    const companies = parseCompanyXml(master.text);
-    if (companies.length) return companies;
-  } catch (err) {
-    console.warn('Current company master query failed:', err);
-  }
-
-  // Third path: identify the open company and then request its Company object.
-  try {
-    const current = await requestCompanyTally(CURRENT_COMPANY_XML, config);
-    openName = currentCompanyName(current.text);
-    if (openName) {
-      const detail = await requestCompanyTally(COMPANY_OBJECT_XML(openName), config);
-      const companies = parseCompanyXml(detail.text);
-      if (companies.length) return companies;
-    }
-  } catch (err) {
-    console.warn('Current company object fallback failed:', err);
+    console.warn('Company profile collection fallback failed:', err);
   }
 
   throw new Error(openName
-    ? `Tally ne current company "${openName}" ka Company master return nahi kiya.`
+    ? `Tally ne current company "${openName}" ka Company profile return nahi kiya.`
     : 'Tally connected hai, lekin current/open company ka naam Tally response me nahi mila.');
 }
-
 export function parseCompaniesXML(xml: string): SellerInfo[] {
   return parseCompanyXml(xml);
 }
