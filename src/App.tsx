@@ -167,6 +167,21 @@ const SAMPLE_ITEMS: StockItem[] = [
   },
 ];
 
+function readStoredJson<T>(key: string, fallback: T, validate?: (value: unknown) => boolean): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed: unknown = JSON.parse(raw);
+    if (validate && !validate(parsed)) return fallback;
+    return parsed as T;
+  } catch {
+    localStorage.removeItem(key);
+    return fallback;
+  }
+}
+
+const isArray = (value: unknown): boolean => Array.isArray(value);
+
 const SAMPLE_INVOICES_SEED: Invoice[] = [
   {
     id: 'inv-seed-1',
@@ -470,25 +485,21 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('new-invoice');
 
   // Master Data
-  const [parties, setParties] = useState<Party[]>(() => {
-    const saved = localStorage.getItem('tally_parties');
-    return saved ? JSON.parse(saved) : SAMPLE_PARTIES;
-  });
+  const [parties, setParties] = useState<Party[]>(() =>
+    readStoredJson<Party[]>('tally_parties', SAMPLE_PARTIES, isArray)
+  );
 
-  const [stockItems, setStockItems] = useState<StockItem[]>(() => {
-    const saved = localStorage.getItem('tally_stock_items');
-    return saved ? JSON.parse(saved) : SAMPLE_ITEMS;
-  });
+  const [stockItems, setStockItems] = useState<StockItem[]>(() =>
+    readStoredJson<StockItem[]>('tally_stock_items', SAMPLE_ITEMS, isArray)
+  );
 
-  const [invoices, setInvoices] = useState<Invoice[]>(() => {
-    const saved = localStorage.getItem('tally_invoices');
-    return saved ? JSON.parse(saved) : SAMPLE_INVOICES_SEED;
-  });
+  const [invoices, setInvoices] = useState<Invoice[]>(() =>
+    readStoredJson<Invoice[]>('tally_invoices', SAMPLE_INVOICES_SEED, isArray)
+  );
 
-  const [companies, setCompanies] = useState<SellerInfo[]>(() => {
-    const saved = localStorage.getItem('tally_companies');
-    return saved ? JSON.parse(saved) : INITIAL_COMPANIES;
-  });
+  const [companies, setCompanies] = useState<SellerInfo[]>(() =>
+    readStoredJson<SellerInfo[]>('tally_companies', INITIAL_COMPANIES, isArray)
+  );
 
   const [sellerInfo, setSellerInfo] = useState<SellerInfo>(() => {
     const saved = localStorage.getItem('tally_seller_info');
