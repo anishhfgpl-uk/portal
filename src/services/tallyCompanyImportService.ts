@@ -118,8 +118,8 @@ const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
 </ENVELOPE>`;
 
 const CURRENT_COMPANY_XML = `<ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>CompanyInfo</ID></HEADER>
-  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY>
 </ENVELOPE>`;
 
 const COMPANY_OBJECT_XML = (companyName: string) => {
@@ -191,7 +191,9 @@ async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ 
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  // Tally CompanyInfo gives the authoritative name of the company that is open.
+  // Tally's "List of Companies" collection returns the company currently
+  // available through the HTTP server. CompanyInfo is a report name and is
+  // not valid on TallyPrime, so never use it for active-company discovery.
   let openName = '';
   try {
     const info = await requestCompanyTally(CURRENT_COMPANY_XML, config);
