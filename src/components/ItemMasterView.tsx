@@ -28,6 +28,7 @@ export const ItemMasterView: React.FC<ItemMasterViewProps> = ({
   stockItems,
   onAddItem,
   onUpdateItem,
+  onSyncToTally,
   onDeleteItem,
   onImportFromTally,
   onOpenXmlPaste,
@@ -275,6 +276,13 @@ export const ItemMasterView: React.FC<ItemMasterViewProps> = ({
 
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-center space-x-1.5">
+                        <button
+                          onClick={() => onSyncToTally(item)}
+                          title="Sync to Tally Prime"
+                          className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition cursor-pointer"
+                        >
+                          <UploadCloud className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => handleExportItemXml(item)}
                           title="Export Tally Stock Item XML"
