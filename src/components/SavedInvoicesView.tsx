@@ -73,6 +73,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | 'synced' | 'pending' | 'imported'>('all');
   const [companyFilterMode, setCompanyFilterMode] = useState<'active' | 'all'>('active');
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [isTwoWaySyncing, setIsTwoWaySyncing] = useState<boolean>(false);
   const [isImportingFromTally, setIsImportingFromTally] = useState<boolean>(false);
   const [isExportingPending, setIsExportingPending] = useState<boolean>(false);
@@ -230,24 +231,21 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
     }
   };
 
-  // 3. Export all pending portal invoices to Tally Prime
-  const handleExportAllPending = async () => {
-    if (pendingInvoices.length === 0) {
-      setActionMessage({
-        text: 'All invoices are already synchronized with Tally Prime. Nothing to export!',
-        type: 'info',
-      });
+  // 3. Export only invoices explicitly selected by the user to Tally Prime
+  const handleExportSelected = async () => {
+    const selected = filteredInvoices.filter((inv) => selectedInvoiceIds.has(inv.id));
+    if (selected.length === 0) {
+      setActionMessage({ text: 'Please select the invoice(s) you want to sync to Tally.', type: 'info' });
       return;
     }
 
     setIsExportingPending(true);
     setActionMessage(null);
-
     const exportedList: Invoice[] = [];
     const errors: string[] = [];
     let updatedInvoices = [...invoices];
 
-    for (const inv of pendingInvoices) {
+    for (const inv of selected) {
       try {
         const res = await exportInvoiceToTally(inv, tallyConfig, sellerInfo.name);
         if (res.success) {
@@ -260,16 +258,16 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
           exportedList.push(syncedInv);
           updatedInvoices = updatedInvoices.map((i) => (i.id === inv.id ? syncedInv : i));
         } else {
-          errors.push(`${inv.invoiceNo}: ${res.message}`);
+          errors.push(inv.invoiceNo + ': ' + res.message);
         }
       } catch (err: any) {
-        errors.push(`${inv.invoiceNo}: ${err.message}`);
+        errors.push(inv.invoiceNo + ': ' + err.message);
       }
     }
 
     onBulkUpdateInvoices(updatedInvoices);
-
-    const report: SyncReport = {
+    setSelectedInvoiceIds(new Set());
+    setSyncReport({
       timestamp: new Date().toISOString(),
       importedCount: 0,
       exportedCount: exportedList.length,
@@ -283,23 +281,14 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
       discoveredParties: 0,
       discoveredItems: 0,
       errors,
-    };
-
-    setSyncReport(report);
+    });
     setIsReportModalOpen(true);
-
-    if (exportedList.length > 0) {
-      setActionMessage({
-        text: `✅ Successfully exported ${exportedList.length} pending invoices to Tally Prime!`,
-        type: 'success',
-      });
-    } else {
-      setActionMessage({
-        text: `❌ Export Failed: ${errors.join(', ')}`,
-        type: 'error',
-      });
-    }
-
+    setActionMessage({
+      text: exportedList.length > 0
+        ? exportedList.length + ' selected invoice(s) synced to Tally Prime' + (errors.length ? '; ' + errors.length + ' failed' : '.')
+        : 'Sync Failed: ' + errors.join(', '),
+      type: exportedList.length > 0 ? 'success' : 'error',
+    });
     setIsExportingPending(false);
   };
 
@@ -558,13 +547,13 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
             {/* Export Pending to Tally */}
             <button
-              onClick={handleExportAllPending}
-              disabled={isExportingPending || pendingInvoices.length === 0}
+              onClick={handleExportSelected}
+              disabled={isExportingPending || selectedInvoiceIds.size === 0}
               className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-700/80 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-bold border border-amber-500/30 transition cursor-pointer disabled:opacity-50"
-              title={`Push ${pendingInvoices.length} un-synced invoices to Tally Prime`}
+              title="Push only the selected invoices to Tally Prime"
             >
               <ArrowUpFromLine className={`w-4 h-4 ${isExportingPending ? 'animate-bounce' : ''}`} />
-              <span>Sync Pending ({pendingInvoices.length})</span>
+              <span>{isExportingPending ? 'Syncing...' : `Sync Selected (${selectedInvoiceIds.size})`}</span>
             </button>
 
             {/* Paste XML Button */}
@@ -729,7 +718,22 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
             <table className="w-full text-left border-collapse min-w-[950px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
-                  <th className="py-3 px-4">Invoice No</th>
+                  <th className="py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={filteredInvoices.length > 0 && filteredInvoices.every((inv) => selectedInvoiceIds.has(inv.id))}
+                        onChange={(e) => setSelectedInvoiceIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) filteredInvoices.forEach((inv) => next.add(inv.id));
+                          else filteredInvoices.forEach((inv) => next.delete(inv.id));
+                          return next;
+                        })}
+                        aria-label="Select all visible invoices"
+                      />
+                      <span>Invoice No</span>
+                    </div>
+                  </th>
                   <th className="py-3 px-3">Date</th>
                   <th className="py-3 px-4">Customer / Party Name</th>
                   <th className="py-3 px-3">State / GSTIN</th>
@@ -744,12 +748,26 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
                 {filteredInvoices.map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-4 font-bold text-blue-600 font-mono">
-                      <div>{inv.invoiceNo}</div>
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedInvoiceIds.has(inv.id)}
+                          onChange={(e) => setSelectedInvoiceIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
+                            return next;
+                          })}
+                          aria-label={`Select invoice ${inv.invoiceNo}`}
+                          className="mt-0.5"
+                        />
+                        <div><div>{inv.invoiceNo}</div>
                       {companyFilterMode === 'all' && inv.sellerName && (
                         <span className="inline-block text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded mt-0.5 border border-slate-200">
                           {inv.sellerName}
                         </span>
                       )}
+                        </div>
+                      </div>
                     </td>
 
                     <td className="py-3 px-3 text-slate-600 whitespace-nowrap">
