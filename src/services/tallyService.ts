@@ -2232,7 +2232,7 @@ export async function ensurePortalVoucherTypeInTally(
 ): Promise<{ created: boolean; exists: boolean; message: string }> {
   const result = await sendTallyRequest(TALLY_XML_QUERIES.PORTAL_VOUCHER_TYPE_COLLECTION, config);
   const xml = sanitizeXmlString(result.text);
-  const blocks = [...xml.matchAll(/<VOUCHERTYPE(?:\\s[^>]*)?>([\\s\\S]*?)<\\/VOUCHERTYPE>/gi)];
+  const blocks = [...xml.matchAll(/<VOUCHERTYPE(?:\s[^>]*)?>([\s\S]*?)<\/VOUCHERTYPE>/gi)];
   for (const m of blocks) {
     const block = m[1];
     const name = (block.match(/<NAME[^>]*>([^<]+)<\/NAME>/i)?.[1] || '').trim();
@@ -2255,7 +2255,7 @@ export async function ensurePortalVoucherTypeInTally(
   </ENVELOPE>`;
   const createdResult = await sendTallyRequest(createXml, config);
   const response = sanitizeXmlString(createdResult.text);
-  const errors = Number(response.match(/<ERRORS>(\\d+)<\\/ERRORS>/i)?.[1] || 0);
+  const errors = Number(response.match(/<ERRORS>(\d+)<\/ERRORS>/i)?.[1] || 0);
   const lineError = response.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i)?.[1];
   if (errors > 0 || lineError) {
     throw new Error(lineError || ('Tally voucher type creation failed (' + errors + ' error(s)).'));
