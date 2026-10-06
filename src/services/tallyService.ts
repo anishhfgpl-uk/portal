@@ -2207,24 +2207,45 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
  */
 export async function fetchSalesVouchersFromTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG,
-  sellerInfo?: SellerInfo
+  sellerInfo?: SellerInfo,
+  fromDate?: string,
+  toDate?: string
 ): Promise<ParsedVouchersResult> {
+  const cleanDate = (value?: string) => {
+    const match = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+    return match ? `${match[1]}${match[2]}${match[3]}` : '';
+  };
+  const from = cleanDate(fromDate);
+  const to = cleanDate(toDate);
+
+  const addDateRange = (xml: string) => {
+    if (!from || !to) return xml;
+    return xml.replace(
+      '<STATICVARIABLES>',
+      `<STATICVARIABLES><SVFROMDATE TYPE="Date">${from}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE>`
+    );
+  };
+
   const queriesToTry = [
     TALLY_XML_QUERIES.SALES_VOUCHERS_COLLECTION,
     TALLY_XML_QUERIES.SALES_VOUCHERS_SIMPLE,
     TALLY_XML_QUERIES.DAYBOOK_EXPORT,
-  ];
+  ].map(addDateRange);
 
   let lastError: Error | null = null;
+  const allParsed: ParsedVouchersResult[] = [];
 
   for (const xmlQuery of queriesToTry) {
     try {
       const res = await sendTallyRequest(xmlQuery, config);
       if (res && res.text && res.text.trim()) {
         const parsed = parseSalesVouchersXML(res.text, sellerInfo);
-        const currentFyInvoices = parsed.invoices.filter((invoice) => isDateInCurrentFinancialYear(invoice.invoiceDate));
-        if (currentFyInvoices.length > 0) {
-          return { ...parsed, invoices: currentFyInvoices };
+        const rangeInvoices = parsed.invoices.filter((invoice) => {
+          if (!fromDate || !toDate) return isDateInCurrentFinancialYear(invoice.invoiceDate);
+          return invoice.invoiceDate >= fromDate && invoice.invoiceDate <= toDate;
+        });
+        if (rangeInvoices.length > 0) {
+          allParsed.push({ ...parsed, invoices: rangeInvoices });
         }
       }
     } catch (err: any) {
@@ -2232,10 +2253,26 @@ export async function fetchSalesVouchersFromTally(
     }
   }
 
-  if (lastError) {
-    throw lastError;
+  if (allParsed.length > 0) {
+    const invoiceMap = new Map<string, Invoice>();
+    const parties = new Map<string, Party>();
+    const items = new Map<string, StockItem>();
+    allParsed.forEach(result => {
+      result.invoices.forEach(inv => invoiceMap.set(
+        `${String(inv.invoiceDate).slice(0, 10)}|${String(inv.invoiceNo).trim().toLowerCase()}|${String(inv.sellerGstin || sellerInfo?.gstin || '').trim().toLowerCase()}`,
+        inv
+      ));
+      result.extractedParties.forEach(p => parties.set(p.name.trim().toLowerCase(), p));
+      result.extractedItems.forEach(i => items.set(i.name.trim().toLowerCase(), i));
+    });
+    return {
+      invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
+      extractedParties: Array.from(parties.values()),
+      extractedItems: Array.from(items.values()),
+    };
   }
 
+  if (lastError) throw lastError;
   return { invoices: [], extractedParties: [], extractedItems: [] };
 }
 
