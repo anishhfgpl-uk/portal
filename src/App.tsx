@@ -742,9 +742,13 @@ export default function App() {
       if (imported.length > 0) {
         // Merge with existing parties by name
         setParties((prev) => {
-          const names = new Set(prev.map((p) => p.name.toLowerCase()));
-          const newEntries = imported.filter((p) => !names.has(p.name.toLowerCase()));
-          return [...prev, ...newEntries];
+          const importedKeys = new Set(imported.map((p) => activeCompanyKey + '|' + p.name.trim().toLowerCase()));
+          const kept = prev.filter((p) => {
+            const key = String(p.companyKey || '').trim();
+            if (key !== activeCompanyKey) return true;
+            return !importedKeys.has(activeCompanyKey + '|' + p.name.trim().toLowerCase());
+          });
+          return [...imported, ...kept];
         });
 
         setTallyStatus('online');
@@ -785,9 +789,13 @@ export default function App() {
       const imported = (await fetchStockItemsFromTally(tallyConfig)).map((i) => ({ ...i, companyKey: activeCompanyKey }));
       if (imported.length > 0) {
         setStockItems((prev) => {
-          const names = new Set(prev.map((i) => i.name.toLowerCase()));
-          const newEntries = imported.filter((i) => !names.has(i.name.toLowerCase()));
-          return [...prev, ...newEntries];
+          const importedKeys = new Set(imported.map((i) => activeCompanyKey + '|' + i.name.trim().toLowerCase()));
+          const kept = prev.filter((i) => {
+            const key = String(i.companyKey || '').trim();
+            if (key !== activeCompanyKey) return true;
+            return !importedKeys.has(activeCompanyKey + '|' + i.name.trim().toLowerCase());
+          });
+          return [...imported, ...kept];
         });
 
         setTallyStatus('online');
