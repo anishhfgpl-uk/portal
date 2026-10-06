@@ -1382,7 +1382,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     // not a negative quantity/rate. Never derive quantity/rate from the amount.
     const qty = Math.abs(Number(item.qty)) || 1;
     const rate = Math.abs(Number(item.rate)) || 0;
-    const amount = Math.abs(Number(item.taxableAmount)) || (qty * rate);
+    const amount = +(qty * rate).toFixed(2);
     const unit = item.unit || 'Nos';
 
     return `
@@ -2284,7 +2284,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
         .map(item => {
           const rate = Math.abs(Number(item.rate)) || 0;
           const qty = Math.abs(Number(item.qty)) || 1;
-          const amount = Math.abs(Number(item.taxableAmount)) || (qty * rate);
+          const amount = +(qty * rate).toFixed(2);
 
           return `
             <ALLINVENTORYENTRIES.LIST>
