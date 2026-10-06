@@ -71,7 +71,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   onTestConnection,
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'synced' | 'pending' | 'imported'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'synced' | 'pending' | 'imported' | 'portal'>('all');
   const [companyFilterMode, setCompanyFilterMode] = useState<'active' | 'all'>('active');
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
@@ -119,12 +119,14 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
     if (statusFilter === 'synced') return inv.tallySyncStatus === 'synced';
     if (statusFilter === 'pending') return inv.tallySyncStatus !== 'synced';
     if (statusFilter === 'imported') return inv.source === 'tally_import';
+    if (statusFilter === 'portal') return inv.source === 'portal' || (inv.tallyVoucherType || '').trim().toLowerCase() === 'portal';
     return true;
   });
 
   const pendingInvoices = companyScopedInvoices.filter((i) => i.tallySyncStatus !== 'synced');
   const syncedInvoices = companyScopedInvoices.filter((i) => i.tallySyncStatus === 'synced');
   const importedInvoices = companyScopedInvoices.filter((i) => i.source === 'tally_import');
+  const portalInvoices = companyScopedInvoices.filter((i) => i.source === 'portal' || (i.tallyVoucherType || '').trim().toLowerCase() === 'portal');
 
   // 1. Two-Way Smart Sync (Import new from Tally, de-duplicate, and export pending to Tally)
   const handleTwoWaySmartSync = async () => {
@@ -716,6 +718,12 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               }`}
             >
               Tally ({importedInvoices.length})
+             <button
+               onClick={() => setStatusFilter('portal')}
+               className={'px-3 py-1 text-xs font-bold rounded-md transition cursor-pointer ' + (statusFilter === 'portal' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800')}
+             >
+               Portal Bills ({portalInvoices.length})
+             </button>
             </button>
           </div>
         </div>
