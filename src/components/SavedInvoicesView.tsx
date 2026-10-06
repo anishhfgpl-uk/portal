@@ -826,11 +826,11 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
                     </td>
 
                     <td className="py-3 px-3 text-right font-mono text-slate-600">
-                      ₹{inv.subtotalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      ₹{Math.abs(Number(inv.subtotalTaxable) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </td>
 
                     <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                      ₹{inv.grandTotal.toLocaleString('en-IN')}
+                      ₹{Math.abs(Number(inv.grandTotal) || 0).toLocaleString('en-IN')}
                     </td>
 
                     {/* Tally Sync Status */}
