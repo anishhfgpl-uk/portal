@@ -31,6 +31,7 @@ import {
   fetchSalesVouchersFromTally,
   performTwoWaySync,
   getCurrentFinancialYearRange,
+  ensurePortalVoucherTypeInTally,
 } from '../services/tallyService';
 import { TallySyncReportModal } from './TallySyncReportModal';
 import { Building2 } from 'lucide-react';
@@ -78,6 +79,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [isTwoWaySyncing, setIsTwoWaySyncing] = useState<boolean>(false);
   const [isImportingFromTally, setIsImportingFromTally] = useState<boolean>(false);
   const [isExportingPending, setIsExportingPending] = useState<boolean>(false);
+  const [isEnsuringPortalType, setIsEnsuringPortalType] = useState<boolean>(false);
   const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
 
@@ -240,6 +242,25 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
       });
     } finally {
       setIsImportingFromTally(false);
+    }
+  };
+
+  // Regular Portal voucher-type check/create. Export also runs this automatically.
+  const handleEnsurePortalVoucherType = async () => {
+    setIsEnsuringPortalType(true);
+    setActionMessage(null);
+    try {
+      const result = await ensurePortalVoucherTypeInTally(tallyConfig, sellerInfo.name);
+      setActionMessage({
+        text: result.created
+          ? '✅ Tally me Sales > Portal voucher type create ho gaya.'
+          : '✅ Tally me Sales > Portal voucher type already available hai.',
+        type: 'success',
+      });
+    } catch (err: any) {
+      setActionMessage({ text: '❌ Portal voucher type check/create failed: ' + err.message, type: 'error' });
+    } finally {
+      setIsEnsuringPortalType(false);
     }
   };
 
@@ -586,6 +607,16 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
             >
               <ArrowDownToLine className={`w-4 h-4 ${isImportingFromTally ? 'animate-bounce' : ''}`} />
               <span>Import from Tally</span>
+            {/* Regular Portal Voucher Type */}
+            <button
+              onClick={handleEnsurePortalVoucherType}
+              disabled={isEnsuringPortalType}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-700/80 hover:bg-slate-700 text-indigo-300 rounded-xl text-xs font-bold border border-indigo-500/30 transition cursor-pointer disabled:opacity-50"
+              title="Check Tally Sales > Portal voucher type and create it if missing"
+            >
+              <ShieldCheck className={`w-4 h-4 ${isEnsuringPortalType ? 'animate-spin' : ''}`} />
+              <span>{isEnsuringPortalType ? 'Checking...' : 'Portal Voucher Type'}</span>
+            </button>
             </button>
 
             {/* Export Pending to Tally */}
