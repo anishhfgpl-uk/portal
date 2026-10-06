@@ -1226,7 +1226,7 @@ export const NewInvoiceView: React.FC<NewInvoiceViewProps> = ({
 
             <div className="flex justify-between items-center text-slate-500 text-[11px]">
               <span>Round Off:</span>
-              <span className="font-mono">{roundOff >= 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}</span>
+              <span className="font-mono">{`+₹${Math.abs(roundOff).toFixed(2)}`}</span>
             </div>
 
             <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
