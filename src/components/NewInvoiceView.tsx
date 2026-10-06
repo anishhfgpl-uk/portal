@@ -405,6 +405,8 @@ export const NewInvoiceView: React.FC<NewInvoiceViewProps> = ({
 
       isInterState: isInterState,
       tallySyncStatus: syncStatus,
+      tallyVoucherType: 'Portal',
+      source: 'portal',
       createdAt: new Date().toISOString(),
       notes: notes,
     };
