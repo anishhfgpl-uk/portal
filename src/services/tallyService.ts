@@ -158,7 +158,10 @@ export const TALLY_XML_QUERIES = {
                             STATENAME,
                             LEDGERPAN,
                             COUNTRYNAME,
-                            OPENINGBALANCE
+                            OPENINGBALANCE,
+                            PARENT,
+                            GUID,
+                            MASTERID
                         </FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
@@ -588,36 +591,33 @@ export function sanitizeXmlString(rawXml: string): string {
 export async function fetchStockItemsFromTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG
 ): Promise<StockItem[]> {
-  // Query 1: Standard Stock Item Collection
-  try {
-    const result = await sendTallyRequest(TALLY_XML_QUERIES.STOCK_ITEM_COLLECTION, config);
-    const items = parseStockItemsXML(result.text);
-    if (items.length > 0) {
-      return items;
+  // Run every compatible query and merge the results. Returning the first
+  // non-empty response can silently lose items on Tally builds/configurations
+  // that return only a subset from a particular collection shape.
+  const queries = [
+    TALLY_XML_QUERIES.STOCK_ITEM_COLLECTION,
+    TALLY_XML_QUERIES.STOCK_ITEM_COLLECTION_SIMPLE,
+    TALLY_XML_QUERIES.STOCK_ITEM_LIST_ACCOUNTS,
+  ];
+  const merged = new Map<string, StockItem>();
+  let lastError: any = null;
+  for (const query of queries) {
+    try {
+      const result = await sendTallyRequest(query, config);
+      const rows = parseStockItemsXML(result.text);
+      for (const row of rows) {
+        const key = row.name.trim().toLowerCase();
+        if (key) merged.set(key, row);
+      }
+    } catch (err) {
+      lastError = err;
     }
-  } catch (err) {
-    console.warn('StockItemCollection query failed, trying simple collection fallback:', err);
   }
-
-  // Query 2: Simple StockItem Collection
-  try {
-    const result2 = await sendTallyRequest(TALLY_XML_QUERIES.STOCK_ITEM_COLLECTION_SIMPLE, config);
-    const items2 = parseStockItemsXML(result2.text);
-    if (items2.length > 0) {
-      return items2;
-    }
-  } catch (err2) {
-    console.warn('StockItemCollectionSimple query failed, trying List of Accounts fallback:', err2);
+  if (merged.size === 0 && lastError) {
+    console.error('All Tally Stock Item queries failed:', lastError);
+    throw lastError;
   }
-
-  // Query 3: List of Accounts (Stock Items)
-  try {
-    const fallbackResult = await sendTallyRequest(TALLY_XML_QUERIES.STOCK_ITEM_LIST_ACCOUNTS, config);
-    return parseStockItemsXML(fallbackResult.text);
-  } catch (fallbackErr) {
-    console.error('All Tally Stock Item queries failed:', fallbackErr);
-    throw fallbackErr;
-  }
+  return Array.from(merged.values());
 }
 
 /**
