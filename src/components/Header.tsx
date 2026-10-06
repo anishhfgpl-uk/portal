@@ -7,6 +7,7 @@ import {
   FileCheck2,
   Sparkles,
   ChevronDown,
+  Download,
 } from 'lucide-react';
 import { INDIAN_STATES } from '../utils/gstUtils';
 import { SellerInfo } from '../types';
@@ -178,6 +179,18 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
           <RefreshCw className={`w-3 h-3 ${tallyStatus === 'checking' ? 'animate-spin' : ''}`} />
         </button>
+
+        {/* New System Setup - downloads the persistent Windows connector installer */}
+        <a
+          id="btnNewSystemSetup"
+          href="/Anish-Tally-Connector-Installer.ps1"
+          download
+          title="Download connector setup for a new Windows system"
+          className="hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>New System Setup</span>
+        </a>
 
         {/* Settings Button */}
         <button
