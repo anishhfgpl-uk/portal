@@ -2295,11 +2295,11 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
                 <RATE>${rate.toFixed(2)}/${xmlEscape(item.unit || 'Nos')}</RATE>
                 <ACTUALQTY>${qty.toFixed(3)} ${xmlEscape(item.unit || 'Nos')}</ACTUALQTY>
                 <BILLEDQTY>${qty.toFixed(3)} ${xmlEscape(item.unit || 'Nos')}</BILLEDQTY>
-                <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+                <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
                 <ACCOUNTINGALLOCATIONS.LIST>
                     <LEDGERNAME>Sales Account</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                    <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+                    <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
                 </ACCOUNTINGALLOCATIONS.LIST>
             </ALLINVENTORYENTRIES.LIST>`;
         })
