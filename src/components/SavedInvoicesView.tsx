@@ -617,7 +617,6 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               <ShieldCheck className={`w-4 h-4 ${isEnsuringPortalType ? 'animate-spin' : ''}`} />
               <span>{isEnsuringPortalType ? 'Checking...' : 'Portal Voucher Type'}</span>
             </button>
-            </button>
 
             {/* Export Pending to Tally */}
             <button
