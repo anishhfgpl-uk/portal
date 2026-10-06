@@ -2279,7 +2279,16 @@ export async function exportInvoiceToTally(
   }
 
   const targetCompany = companyName || config.companyName || '';
-  await ensurePortalVoucherTypeInTally(config, targetCompany);
+
+  // Voucher type check is best-effort. The actual voucher import below is the
+  // authoritative Tally operation. A temporary bridge 502 during the check
+  // must not block a valid Portal voucher export.
+  try {
+    await ensurePortalVoucherTypeInTally(config, targetCompany);
+  } catch (voucherTypeCheckError: any) {
+    console.warn('Portal voucher type pre-check skipped:', voucherTypeCheckError?.message || voucherTypeCheckError);
+  }
+
   const xml = generateTallySalesVoucherXML(invoice, targetCompany);
   const res = await sendTallyRequest(xml, config);
 
