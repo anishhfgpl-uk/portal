@@ -1394,11 +1394,11 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
             <RATE>${rate.toFixed(2)}/${xmlEscape(unit)}</RATE>
             <ACTUALQTY>${qty.toFixed(3)} ${xmlEscape(unit)}</ACTUALQTY>
             <BILLEDQTY>${qty.toFixed(3)} ${xmlEscape(unit)}</BILLEDQTY>
-            <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${amount.toFixed(2)}</AMOUNT>
             <ACCOUNTINGALLOCATIONS.LIST>
                 <LEDGERNAME>Sales Account</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
+                <AMOUNT>${amount.toFixed(2)}</AMOUNT>
             </ACCOUNTINGALLOCATIONS.LIST>
         </ALLINVENTORYENTRIES.LIST>`;
   }).join('\\n');
@@ -1437,7 +1437,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         <LEDGERENTRIES.LIST>
             <LEDGERNAME>Output IGST</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${invoice.totalIgst.toFixed(2)}</AMOUNT>
+            <AMOUNT>${invoice.totalIgst.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
     }
   } else {
@@ -1446,7 +1446,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         <LEDGERENTRIES.LIST>
             <LEDGERNAME>Output CGST</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${invoice.totalCgst.toFixed(2)}</AMOUNT>
+            <AMOUNT>${invoice.totalCgst.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
     }
     if (invoice.totalSgst > 0) {
@@ -1454,7 +1454,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         <LEDGERENTRIES.LIST>
             <LEDGERNAME>Output SGST</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${invoice.totalSgst.toFixed(2)}</AMOUNT>
+            <AMOUNT>${invoice.totalSgst.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
     }
   }
@@ -1505,11 +1505,11 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
                         <LEDGERNAME>${xmlEscape(invoice.partyName)}</LEDGERNAME>
                         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
                         <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-                        <AMOUNT>${invoice.grandTotal.toFixed(2)}</AMOUNT>
+                        <AMOUNT>-${invoice.grandTotal.toFixed(2)}</AMOUNT>
                         <BILLALLOCATIONS.LIST>
                             <NAME>${xmlEscape(invoice.invoiceNo)}</NAME>
                             <BILLTYPE>New Ref</BILLTYPE>
-                            <AMOUNT>${invoice.grandTotal.toFixed(2)}</AMOUNT>
+                            <AMOUNT>-${invoice.grandTotal.toFixed(2)}</AMOUNT>
                         </BILLALLOCATIONS.LIST>
                     </LEDGERENTRIES.LIST>
 
@@ -2295,11 +2295,11 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
                 <RATE>${rate.toFixed(2)}/${xmlEscape(item.unit || 'Nos')}</RATE>
                 <ACTUALQTY>${qty.toFixed(3)} ${xmlEscape(item.unit || 'Nos')}</ACTUALQTY>
                 <BILLEDQTY>${qty.toFixed(3)} ${xmlEscape(item.unit || 'Nos')}</BILLEDQTY>
-                <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
+                <AMOUNT>${amount.toFixed(2)}</AMOUNT>
                 <ACCOUNTINGALLOCATIONS.LIST>
                     <LEDGERNAME>Sales Account</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                    <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
+                    <AMOUNT>${amount.toFixed(2)}</AMOUNT>
                 </ACCOUNTINGALLOCATIONS.LIST>
             </ALLINVENTORYENTRIES.LIST>`;
         })
@@ -2312,7 +2312,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
             <LEDGERENTRIES.LIST>
                 <LEDGERNAME>Output IGST</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                <AMOUNT>-${inv.totalIgst.toFixed(2)}</AMOUNT>
+                <AMOUNT>${inv.totalIgst.toFixed(2)}</AMOUNT>
             </LEDGERENTRIES.LIST>`;
         }
       } else {
@@ -2321,7 +2321,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
             <LEDGERENTRIES.LIST>
                 <LEDGERNAME>Output CGST</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                <AMOUNT>-${inv.totalCgst.toFixed(2)}</AMOUNT>
+                <AMOUNT>${inv.totalCgst.toFixed(2)}</AMOUNT>
             </LEDGERENTRIES.LIST>`;
         }
         if (inv.totalSgst > 0) {
@@ -2329,7 +2329,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
             <LEDGERENTRIES.LIST>
                 <LEDGERNAME>Output SGST</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                <AMOUNT>-${inv.totalSgst.toFixed(2)}</AMOUNT>
+                <AMOUNT>${inv.totalSgst.toFixed(2)}</AMOUNT>
             </LEDGERENTRIES.LIST>`;
         }
       }
@@ -2353,11 +2353,11 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
                     <LEDGERNAME>${xmlEscape(inv.partyName)}</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
                     <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-                    <AMOUNT>${inv.grandTotal.toFixed(2)}</AMOUNT>
+                    <AMOUNT>-${inv.grandTotal.toFixed(2)}</AMOUNT>
                     <BILLALLOCATIONS.LIST>
                         <NAME>${xmlEscape(inv.invoiceNo)}</NAME>
                         <BILLTYPE>New Ref</BILLTYPE>
-                        <AMOUNT>${inv.grandTotal.toFixed(2)}</AMOUNT>
+                        <AMOUNT>-${inv.grandTotal.toFixed(2)}</AMOUNT>
                     </BILLALLOCATIONS.LIST>
                 </LEDGERENTRIES.LIST>
                 ${inventoryEntriesXML}
