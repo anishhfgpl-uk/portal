@@ -196,6 +196,14 @@ const isDemoCompany = (company: SellerInfo | null | undefined): boolean => {
   );
 };
 
+/** Stable identity for company-wise data isolation. GSTIN/GUID is preferred over display name. */
+const getCompanyKey = (company: SellerInfo | null | undefined): string => {
+  const gstin = String(company?.gstin || '').trim().toLowerCase();
+  const guid = String(company?.tallyGuid || '').trim().toLowerCase();
+  const name = String(company?.name || '').trim().toLowerCase();
+  return (gstin || guid || name).replace(/[^a-z0-9]+/g, '-');
+};
+
 const EMPTY_SELLER_INFO: SellerInfo = {
   id: 'no-company-selected',
   name: '',
@@ -602,6 +610,32 @@ export default function App() {
   const [isXmlPasteOpen, setIsXmlPasteOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
+  // Company-wise view: never mix records belonging to different Tally companies.
+  const activeCompanyKey = getCompanyKey(sellerInfo);
+  const companyInvoices = invoices.filter((inv) => {
+    const invGstin = String(inv.sellerGstin || '').trim().toLowerCase();
+    const invName = String(inv.sellerName || '').trim().toLowerCase();
+    return Boolean(activeCompanyKey) && (
+      (sellerInfo.gstin && invGstin === String(sellerInfo.gstin).trim().toLowerCase()) ||
+      (sellerInfo.name && invName === String(sellerInfo.name).trim().toLowerCase())
+    );
+  });
+  const companyParties = parties.filter((party) => {
+    const key = String(party.companyKey || '');
+    if (key) return key === activeCompanyKey;
+    return companyInvoices.some((inv) => String(inv.partyName || '').trim().toLowerCase() === String(party.name || '').trim().toLowerCase());
+  });
+  const companyItems = stockItems.filter((item) => {
+    const key = String(item.companyKey || '');
+    if (key) return key === activeCompanyKey;
+    return companyInvoices.some((inv) => inv.items?.some((row) => String(row.name || '').trim().toLowerCase() === String(item.name || '').trim().toLowerCase()));
+  });
+  const companyVouchers = tallyVouchers.filter((voucher) => {
+    const key = String(voucher.companyKey || '');
+    if (key) return key === activeCompanyKey;
+    return false;
+  });
+
   // Sync to LocalStorage
   useEffect(() => {
     localStorage.setItem('tally_parties', JSON.stringify(parties));
@@ -704,7 +738,7 @@ export default function App() {
     });
 
     try {
-      const imported = await fetchDebtorsFromTally(tallyConfig);
+      const imported = (await fetchDebtorsFromTally(tallyConfig)).map((p) => ({ ...p, companyKey: activeCompanyKey }));
       if (imported.length > 0) {
         // Merge with existing parties by name
         setParties((prev) => {
@@ -748,7 +782,7 @@ export default function App() {
     });
 
     try {
-      const imported = await fetchStockItemsFromTally(tallyConfig);
+      const imported = (await fetchStockItemsFromTally(tallyConfig)).map((i) => ({ ...i, companyKey: activeCompanyKey }));
       if (imported.length > 0) {
         setStockItems((prev) => {
           const names = new Set(prev.map((i) => i.name.toLowerCase()));
@@ -790,9 +824,10 @@ export default function App() {
         const t = v.voucherType.toLowerCase();
         return t.includes('receipt') || t.includes('credit note') || t.includes('creditnote') || t.includes('payment') || t.includes('journal') || t.includes('sales');
       });
+      const companyRelevant = relevant.map((v) => ({ ...v, companyKey: activeCompanyKey }));
       setTallyVouchers(prev => {
         const map = new Map(prev.map(v => [v.tallyGuid || v.tallyMasterId || v.id, v]));
-        relevant.forEach(v => map.set(v.tallyGuid || v.tallyMasterId || v.id, v));
+        companyRelevant.forEach(v => map.set(v.tallyGuid || v.tallyMasterId || v.id, v));
         return Array.from(map.values()).sort((a,b) => b.date.localeCompare(a.date));
       });
       setTallyStatus('online');
@@ -869,7 +904,7 @@ export default function App() {
 
   // Party handlers
   const handleAddParty = (party: Party) => {
-    setParties((prev) => [party, ...prev]);
+    setParties((prev) => [{ ...party, companyKey: activeCompanyKey }, ...prev]);
   };
   const handleUpdateParty = (party: Party) => {
     setParties((prev) => prev.map((p) => (p.id === party.id ? party : p)));
@@ -892,7 +927,7 @@ export default function App() {
 
   // Item handlers
   const handleAddItem = (item: StockItem) => {
-    setStockItems((prev) => [item, ...prev]);
+    setStockItems((prev) => [{ ...item, companyKey: activeCompanyKey }, ...prev]);
   };
   const handleUpdateItem = (item: StockItem) => {
     setStockItems((prev) => prev.map((i) => (i.id === item.id ? item : i)));
@@ -1006,9 +1041,9 @@ export default function App() {
         isImportingVouchers={isImportingVouchers}
         isImportingDebtors={isImportingDebtors}
         isImportingItems={isImportingItems}
-        partyCount={parties.length}
-        itemCount={stockItems.length}
-        savedInvoiceCount={invoices.length}
+        partyCount={companyParties.length}
+        itemCount={companyItems.length}
+        savedInvoiceCount={companyInvoices.length}
       />
 
       {/* 2. Main Content Area */}
@@ -1041,8 +1076,8 @@ export default function App() {
         <main className="flex-1 pb-16">
           {activeTab === 'new-invoice' && (
             <NewInvoiceView
-              parties={parties}
-              stockItems={stockItems}
+              parties={companyParties}
+              stockItems={companyItems}
               sellerState={sellerInfo.state}
               sellerName={sellerInfo.name}
               sellerGstin={sellerInfo.gstin}
@@ -1069,7 +1104,7 @@ export default function App() {
 
           {(activeTab === 'saved-invoices' || activeTab === 'invoice-list') && (
             <SavedInvoicesView
-              invoices={invoices}
+              invoices={companyInvoices}
               onPrintInvoice={(inv) => setPrintingInvoice(inv)}
               onDeleteInvoice={handleDeleteInvoice}
               onUpdateInvoice={handleUpdateInvoice}
@@ -1085,7 +1120,7 @@ export default function App() {
               onAddItems={(newI) => {
                 setStockItems((prev) => {
                   const names = new Set(prev.map((i) => i.name.toLowerCase()));
-                  return [...prev, ...newI.filter((i) => !names.has(i.name.toLowerCase()))];
+                  return [...prev, ...newI.map((i) => ({ ...i, companyKey: activeCompanyKey })).filter((i) => !names.has(i.name.toLowerCase()))];
                 });
               }}
               sellerInfo={sellerInfo}
@@ -1098,12 +1133,12 @@ export default function App() {
           )}
 
           {activeTab === 'tally-vouchers' && (
-            <TallyVouchersView vouchers={tallyVouchers} parties={parties} onImport={handleImportVouchersFromTally} isImporting={isImportingVouchers} />
+            <TallyVouchersView vouchers={companyVouchers} parties={companyParties} onImport={handleImportVouchersFromTally} isImporting={isImportingVouchers} />
           )}
 
           {activeTab === 'party-master' && (
             <PartyMasterView
-              parties={parties}
+              parties={companyParties}
               onAddParty={handleAddParty}
               onUpdateParty={handleUpdateParty}
               onSyncToTally={handleSyncPartyToTally}
@@ -1117,7 +1152,7 @@ export default function App() {
 
           {activeTab === 'item-master' && (
             <ItemMasterView
-              stockItems={stockItems}
+              stockItems={companyItems}
               onAddItem={handleAddItem}
               onUpdateItem={handleUpdateItem}
               onSyncToTally={handleSyncItemToTally}
@@ -1131,7 +1166,7 @@ export default function App() {
 
           {activeTab === 'gstr-1' && (
             <Gstr1ReportView
-              invoices={invoices}
+              invoices={companyInvoices}
               sellerInfo={sellerInfo}
               companies={companies}
               onSelectCompany={handleSelectCompany}
@@ -1204,14 +1239,14 @@ export default function App() {
           if (extractedParties && extractedParties.length > 0) {
             setParties((prev) => {
               const names = new Set(prev.map((p) => p.name.toLowerCase()));
-              return [...prev, ...extractedParties.filter((p) => !names.has(p.name.toLowerCase()))];
+              return [...prev, ...extractedParties.map((p) => ({ ...p, companyKey: activeCompanyKey })).filter((p) => !names.has(p.name.toLowerCase()))];
             });
           }
 
           if (extractedItems && extractedItems.length > 0) {
             setStockItems((prev) => {
               const names = new Set(prev.map((i) => i.name.toLowerCase()));
-              return [...prev, ...extractedItems.filter((i) => !names.has(i.name.toLowerCase()))];
+              return [...prev, ...extractedItems.map((i) => ({ ...i, companyKey: activeCompanyKey })).filter((i) => !names.has(i.name.toLowerCase()))];
             });
           }
         }}
