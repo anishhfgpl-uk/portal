@@ -77,6 +77,12 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [isTwoWaySyncing, setIsTwoWaySyncing] = useState<boolean>(false);
   const [isImportingFromTally, setIsImportingFromTally] = useState<boolean>(false);
+  const [invoiceFromDate, setInvoiceFromDate] = useState<string>(() => {
+    const now = new Date();
+    const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    return `${fyStartYear}-04-01`;
+  });
+  const [invoiceToDate, setInvoiceToDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [isExportingPending, setIsExportingPending] = useState<boolean>(false);
   const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
@@ -170,7 +176,12 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
     setActionMessage(null);
 
     try {
-      const result = await fetchSalesVouchersFromTally(tallyConfig, sellerInfo);
+      if (!invoiceFromDate || !invoiceToDate || invoiceFromDate > invoiceToDate) {
+        setActionMessage({ text: '❌ Please select a valid From Date and To Date.', type: 'error' });
+        return;
+      }
+
+      const result = await fetchSalesVouchersFromTally(tallyConfig, sellerInfo, invoiceFromDate, invoiceToDate);
 
       if (result.invoices.length === 0) {
         setActionMessage({
@@ -564,6 +575,26 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
             </p>
           </div>
 
+          {/* Invoice import date range */}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0 bg-slate-950/40 rounded-xl p-2 border border-slate-700/60">
+            <label className="text-[10px] font-bold text-slate-300 uppercase">From</label>
+            <input
+              type="date"
+              value={invoiceFromDate}
+              onChange={(e) => setInvoiceFromDate(e.target.value)}
+              className="px-2.5 py-2 bg-white text-slate-900 rounded-lg text-xs font-semibold border-0"
+              aria-label="Invoice import from date"
+            />
+            <label className="text-[10px] font-bold text-slate-300 uppercase">To</label>
+            <input
+              type="date"
+              value={invoiceToDate}
+              onChange={(e) => setInvoiceToDate(e.target.value)}
+              className="px-2.5 py-2 bg-white text-slate-900 rounded-lg text-xs font-semibold border-0"
+              aria-label="Invoice import to date"
+            />
+          </div>
+
           {/* Sync Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             {/* 2-Way Smart Sync */}
@@ -582,10 +613,10 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               onClick={handleImportFromTally}
               disabled={isImportingFromTally}
               className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-700/80 hover:bg-slate-700 text-emerald-300 rounded-xl text-xs font-bold border border-emerald-500/30 transition cursor-pointer disabled:opacity-50"
-              title="Import all sales vouchers from active Tally Prime company"
+              title="Import sales invoices from Tally for the selected From Date to To Date"
             >
               <ArrowDownToLine className={`w-4 h-4 ${isImportingFromTally ? 'animate-bounce' : ''}`} />
-              <span>Import from Tally</span>
+              <span>Import Invoices</span>
             </button>
 
             {/* Export Pending to Tally */}
