@@ -62,7 +62,7 @@ export const TallyVouchersView: React.FC<Props> = ({ vouchers, parties, onImport
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {tab === 'vouchers' ? (
           <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-100"><tr><th className="p-3 text-left">Date</th><th className="p-3 text-left">Type</th><th className="p-3 text-left">Voucher No.</th><th className="p-3 text-left">Party</th><th className="p-3 text-right">Amount</th><th className="p-3 text-left">Narration</th></tr></thead><tbody className="divide-y">
-          {filtered.map(v=><tr key={v.id} className="hover:bg-slate-50"><td className="p-3">{v.date}</td><td className="p-3 font-semibold">{v.voucherType}</td><td className="p-3 font-mono">{v.voucherNumber}</td><td className="p-3">{v.partyName || '-'}</td><td className="p-3 text-right font-bold">₹{Math.abs(Number(v.amount) || 0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td><td className="p-3 text-slate-500">{v.narration || '-'}</td></tr>)}
+          {filtered.map(v=><tr key={v.id} className="hover:bg-slate-50"><td className="p-3">{v.date}</td><td className="p-3 font-semibold">{v.voucherType}</td><td className="p-3 font-mono">{v.voucherNumber}</td><td className="p-3">{v.partyName || '-'}</td><td className="p-3 text-right font-bold">₹{Math.abs(parseFloat(String(v.amount).replace(/[^0-9.-]/g,'')) || 0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td><td className="p-3 text-slate-500">{v.narration || '-'}</td></tr>)}
           {filtered.length===0 && <tr><td colSpan={6} className="p-10 text-center text-slate-500">No imported Receipt / Credit Note vouchers. Click Import.</td></tr>}
           </tbody></table></div>
         ) : (
