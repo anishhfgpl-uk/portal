@@ -2212,7 +2212,7 @@ export async function fetchSalesVouchersFromTally(
   toDate?: string
 ): Promise<ParsedVouchersResult> {
   const cleanDate = (value?: string) => {
-    const match = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
     return match ? `${match[1]}${match[2]}${match[3]}` : '';
   };
   const from = cleanDate(fromDate);
