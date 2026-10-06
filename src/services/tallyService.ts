@@ -2021,20 +2021,37 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
       let qty = 1;
       let unit = 'Nos';
       if (rawQty) {
-        const match = rawQty.match(/^([\d.]+)\s*(.*)$/);
+        // Tally may return quantity as "2 Nos", "2.000 PCS" or with extra
+        // formatting. Always preserve the numeric quantity and unit separately.
+        const match = rawQty.trim().match(/^(-?[\d,]+(?:\.\d+)?)\s*(.*)$/);
         if (match) {
-          qty = parseFloat(match[1]) || 1;
-          if (match[2]) unit = match[2].trim();
+          const parsedQty = Number(match[1].replace(/,/g, ''));
+          if (Number.isFinite(parsedQty) && parsedQty !== 0) qty = Math.abs(parsedQty);
+          if (match[2]?.trim()) unit = match[2].trim();
         }
       }
 
-      // Parse Rate
+      // Parse Rate. Tally can return values such as "500/Nos", "500.00 / PCS"
+      // or currency-formatted text. Do not let parseFloat() turn a formatted rate
+      // into zero; the invoice must retain the actual Qty + Rate from Tally.
       const rawRate = getNodeValue(invNode, 'RATE');
       let rate = 0;
       if (rawRate) {
         const rParts = rawRate.split('/');
-        rate = Math.abs(parseFloat(rParts[0])) || 0;
-        if (rParts[1] && !unit) unit = rParts[1].trim();
+        const numericRate = rParts[0].replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+        if (numericRate) {
+          const parsedRate = Number(numericRate[0]);
+          if (Number.isFinite(parsedRate)) rate = Math.abs(parsedRate);
+        }
+        if (rParts[1]?.trim()) unit = rParts[1].trim();
+      }
+
+      // Some Tally exports expose the rate through RATEOFVATTAX or another
+      // numeric child while RATE is empty. Never lose the rate when the amount
+      // and quantity are available.
+      if (!rate && qty > 0) {
+        const fallbackAmount = Math.abs(Number(getNodeValue(invNode, 'AMOUNT')) || 0);
+        if (fallbackAmount > 0) rate = +(fallbackAmount / qty).toFixed(2);
       }
 
       // Parse Amount (Credit in sales is negative in Tally XML)
