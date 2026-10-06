@@ -331,13 +331,13 @@ export const InvoiceEditorModal: React.FC<Props> = ({ invoice, onSave, onClose }
                   <span>SGST: <strong className="font-mono">₹{totals.sgst.toFixed(2)}</strong></span>
                 </div>
               )}
-              <div>Round Off: <span className="font-mono">{totals.roundOff.toFixed(2)}</span></div>
+              <div>Round Off: <span className="font-mono">{Math.abs(totals.roundOff).toFixed(2)}</span></div>
             </div>
 
             <div className="text-right">
               <div className="text-slate-400 uppercase text-[10px] tracking-wider">Grand Total Amount</div>
               <div className="text-xl font-bold font-mono text-emerald-400">
-                ₹{totals.total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                ₹{Math.abs(totals.total).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
           </div>
