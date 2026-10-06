@@ -2235,8 +2235,8 @@ export async function ensurePortalVoucherTypeInTally(
   const blocks = [...xml.matchAll(/<VOUCHERTYPE(?:\\s[^>]*)?>([\\s\\S]*?)<\\/VOUCHERTYPE>/gi)];
   for (const m of blocks) {
     const block = m[1];
-    const name = (block.match(/<NAME[^>]*>([^<]+)<\\/NAME>/i)?.[1] || '').trim();
-    const parent = (block.match(/<PARENT[^>]*>([^<]+)<\\/PARENT>/i)?.[1] || '').trim();
+    const name = (block.match(/<NAME[^>]*>([^<]+)<\/NAME>/i)?.[1] || '').trim();
+    const parent = (block.match(/<PARENT[^>]*>([^<]+)<\/PARENT>/i)?.[1] || '').trim();
     if (name.toLowerCase() === 'portal' && parent.toLowerCase() === 'sales') {
       return { created: false, exists: true, message: 'Tally me Sales > Portal voucher type already available.' };
     }
@@ -2256,7 +2256,7 @@ export async function ensurePortalVoucherTypeInTally(
   const createdResult = await sendTallyRequest(createXml, config);
   const response = sanitizeXmlString(createdResult.text);
   const errors = Number(response.match(/<ERRORS>(\\d+)<\\/ERRORS>/i)?.[1] || 0);
-  const lineError = response.match(/<LINEERROR>([^<]+)<\\/LINEERROR>/i)?.[1];
+  const lineError = response.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i)?.[1];
   if (errors > 0 || lineError) {
     throw new Error(lineError || ('Tally voucher type creation failed (' + errors + ' error(s)).'));
   }
