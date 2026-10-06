@@ -607,6 +607,8 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
             >
               <ArrowDownToLine className={`w-4 h-4 ${isImportingFromTally ? 'animate-bounce' : ''}`} />
               <span>Import from Tally</span>
+            </button>
+
             {/* Regular Portal Voucher Type */}
             <button
               onClick={handleEnsurePortalVoucherType}
@@ -748,12 +750,12 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               }`}
             >
               Tally ({importedInvoices.length})
-             <button
-               onClick={() => setStatusFilter('portal')}
-               className={'px-3 py-1 text-xs font-bold rounded-md transition cursor-pointer ' + (statusFilter === 'portal' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800')}
-             >
-               Portal Bills ({portalInvoices.length})
-             </button>
+            </button>
+            <button
+              onClick={() => setStatusFilter('portal')}
+              className={'px-3 py-1 text-xs font-bold rounded-md transition cursor-pointer ' + (statusFilter === 'portal' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800')}
+            >
+              Portal Bills ({portalInvoices.length})
             </button>
           </div>
         </div>
