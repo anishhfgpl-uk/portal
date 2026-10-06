@@ -13,6 +13,8 @@ export interface Party {
   country: string;
   opening_balance?: number;
   credit_period?: number;
+  /** Stable company key used to isolate master data between Tally companies. */
+  companyKey?: string;
 }
 
 export interface StockItem {
@@ -24,6 +26,8 @@ export interface StockItem {
   rate?: number;
   description?: string;
   category?: string;
+  /** Stable company key used to isolate master data between Tally companies. */
+  companyKey?: string;
 }
 
 export interface InvoiceItemRow {
@@ -219,4 +223,6 @@ export interface TallyVoucher {
   tallyGuid?: string;
   tallyMasterId?: string;
   source: 'tally_import';
+  /** Stable company key used to isolate vouchers between Tally companies. */
+  companyKey?: string;
 }
