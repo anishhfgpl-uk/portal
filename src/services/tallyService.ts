@@ -251,6 +251,16 @@ export const TALLY_XML_QUERIES = {
     </BODY>
 </ENVELOPE>`,
 
+  // Portal voucher type check: Portal bills are stored in Tally under Sales > Portal.
+  PORTAL_VOUCHER_TYPE_COLLECTION: `<ENVELOPE>
+    <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalVoucherTypeCollection</ID></HEADER>
+    <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+      <TDL><TDLMESSAGE>
+        <COLLECTION NAME="PortalVoucherTypeCollection" ISMODIFY="No"><TYPE>VoucherType</TYPE><FETCH>NAME,PARENT</FETCH></COLLECTION>
+      </TDLMESSAGE></TDL>
+    </DESC></BODY>
+  </ENVELOPE>`,
+
   // Sales Vouchers (Invoices) Collection Query for Tally Prime
   SALES_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
@@ -1484,9 +1494,9 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         </DESC>
         <DATA>
             <TALLYMESSAGE xmlns:UDF="TallyUDF">
-                <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
+                <VOUCHER VCHTYPE="Portal" ACTION="Create" OBJVIEW="Invoice Voucher View">
                     <DATE>${voucherDate}</DATE>
-                    <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+                    <VOUCHERTYPENAME>Portal</VOUCHERTYPENAME>
                     <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
                     <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
                     <OBJVIEW>Invoice Voucher View</OBJVIEW>
@@ -2213,6 +2223,47 @@ export async function fetchSalesVouchersFromTally(
 }
 
 /**
+ * Ensures Tally has a Voucher Type named "Portal" under the Sales parent.
+ * This is a regular part of Portal -> Tally export, not an exception workflow.
+ */
+export async function ensurePortalVoucherTypeInTally(
+  config: TallyConfig = DEFAULT_TALLY_CONFIG,
+  companyName = ''
+): Promise<{ created: boolean; exists: boolean; message: string }> {
+  const result = await sendTallyRequest(TALLY_XML_QUERIES.PORTAL_VOUCHER_TYPE_COLLECTION, config);
+  const xml = sanitizeXmlString(result.text);
+  const blocks = [...xml.matchAll(/<VOUCHERTYPE(?:\\s[^>]*)?>([\\s\\S]*?)<\\/VOUCHERTYPE>/gi)];
+  for (const m of blocks) {
+    const block = m[1];
+    const name = (block.match(/<NAME[^>]*>([^<]+)<\\/NAME>/i)?.[1] || '').trim();
+    const parent = (block.match(/<PARENT[^>]*>([^<]+)<\\/PARENT>/i)?.[1] || '').trim();
+    if (name.toLowerCase() === 'portal' && parent.toLowerCase() === 'sales') {
+      return { created: false, exists: true, message: 'Tally me Sales > Portal voucher type already available.' };
+    }
+  }
+
+  const createXml = `<ENVELOPE>
+    <HEADER><VERSION>1</VERSION><TALLYREQUEST>Import</TALLYREQUEST><TYPE>Data</TYPE><ID>Voucher Types</ID></HEADER>
+    <BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>${xmlEscape(companyName || config.companyName || '')}</SVCURRENTCOMPANY></STATICVARIABLES></DESC>
+      <DATA><TALLYMESSAGE xmlns:UDF="TallyUDF">
+        <VOUCHERTYPE NAME="Portal" ACTION="Create">
+          <PARENT>Sales</PARENT><NUMBERINGMETHOD>Automatic</NUMBERINGMETHOD><ISOPTIONAL>No</ISOPTIONAL>
+          <USEFORPOSINVOICE>No</USEFORPOSINVOICE><ALLOWZEROENTRIES>No</ALLOWZEROENTRIES>
+        </VOUCHERTYPE>
+      </TALLYMESSAGE></DATA>
+    </BODY>
+  </ENVELOPE>`;
+  const createdResult = await sendTallyRequest(createXml, config);
+  const response = sanitizeXmlString(createdResult.text);
+  const errors = Number(response.match(/<ERRORS>(\\d+)<\\/ERRORS>/i)?.[1] || 0);
+  const lineError = response.match(/<LINEERROR>([^<]+)<\\/LINEERROR>/i)?.[1];
+  if (errors > 0 || lineError) {
+    throw new Error(lineError || ('Tally voucher type creation failed (' + errors + ' error(s)).'));
+  }
+  return { created: true, exists: true, message: 'Tally me Sales > Portal voucher type create ho gaya.' };
+}
+
+/**
  * Exports a single Invoice to Tally Prime with error parsing and confirmation
  */
 export async function exportInvoiceToTally(
@@ -2227,7 +2278,9 @@ export async function exportInvoiceToTally(
     };
   }
 
-  const xml = generateTallySalesVoucherXML(invoice, companyName || config.companyName || '');
+  const targetCompany = companyName || config.companyName || '';
+  await ensurePortalVoucherTypeInTally(config, targetCompany);
+  const xml = generateTallySalesVoucherXML(invoice, targetCompany);
   const res = await sendTallyRequest(xml, config);
 
   if (!res || !res.text) {
@@ -2336,9 +2389,9 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
 
       return `
         <TALLYMESSAGE xmlns:UDF="TallyUDF">
-            <VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
+            <VOUCHER VCHTYPE="Portal" ACTION="Create" OBJVIEW="Invoice Voucher View">
                 <DATE>${voucherDate}</DATE>
-                <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+                <VOUCHERTYPENAME>Portal</VOUCHERTYPENAME>
                 <VOUCHERNUMBER>${xmlEscape(inv.invoiceNo)}</VOUCHERNUMBER>
                 <REFERENCE>${xmlEscape(inv.invoiceNo)}</REFERENCE>
                 <PARTYLEDGERNAME>${xmlEscape(inv.partyName)}</PARTYLEDGERNAME>
