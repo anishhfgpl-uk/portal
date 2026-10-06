@@ -1930,7 +1930,7 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       tallyGuid,
       tallyMasterId,
       tallyVoucherType: vchType,
-      source: 'tally_import',
+      source: vchType.trim().toLowerCase() === 'portal' ? 'portal' : 'tally_import',
       isDuplicateProtected: true,
       createdAt: new Date().toISOString(),
     });
@@ -2549,8 +2549,38 @@ export async function performTwoWaySync({
     }
   });
 
-  // Step 3 intentionally does NOT export portal invoices automatically.
-  // Tally export is manual and selection-only from SavedInvoicesView.
+  // Step 3: Export portal-created pending invoices to Tally automatically.
+  // Tally-imported invoices are already marked synced, so only genuine portal pending
+  // invoices are pushed. Each successful export is marked synced to prevent duplicates.
+  const pendingPortalInvoices = mergedInvoices.filter((inv) =>
+    inv.tallySyncStatus !== 'synced' &&
+    (inv.source === 'portal' || !inv.source)
+  );
+
+  for (const inv of pendingPortalInvoices) {
+    try {
+      const exportResult = await exportInvoiceToTally(inv, tallyConfig, sellerInfo.name);
+      if (exportResult.success) {
+        const idx = mergedInvoices.findIndex((i) => i.id === inv.id);
+        if (idx !== -1) {
+          mergedInvoices[idx] = {
+            ...mergedInvoices[idx],
+            tallySyncStatus: 'synced',
+            tallySyncDate: new Date().toISOString(),
+            tallyVoucherType: 'Portal',
+            source: 'portal',
+            isDuplicateProtected: true,
+          };
+          report.exportedCount++;
+          report.exportedInvoices.push(mergedInvoices[idx]);
+        }
+      } else {
+        report.errors.push(`Portal export ${inv.invoiceNo}: ${exportResult.message}`);
+      }
+    } catch (err: any) {
+      report.errors.push(`Portal export ${inv.invoiceNo}: ${err?.message || 'Unknown Tally error'}`);
+    }
+  }
 
   report.totalInPortal = mergedInvoices.length;
 
