@@ -1377,9 +1377,12 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
   // One inventory row per portal invoice item. Each row carries stock item,
   // quantity, rate and taxable amount, so Tally opens it as an Item Invoice.
   const inventoryEntriesXML = (invoice.items || []).map(item => {
-    const qty = Number(item.qty) || 1;
-    const rate = Number(item.rate) || 0;
-    const amount = Number(item.taxableAmount) || (qty * rate);
+    // Tally Item Invoice: quantity/rate are ALWAYS sent explicitly and positively.
+    // Credit-side amounts remain negative in Tally XML; this is the accounting sign,
+    // not a negative quantity/rate. Never derive quantity/rate from the amount.
+    const qty = Math.abs(Number(item.qty)) || 1;
+    const rate = Math.abs(Number(item.rate)) || 0;
+    const amount = Math.abs(Number(item.taxableAmount)) || (qty * rate);
     const unit = item.unit || 'Nos';
 
     return `
@@ -1387,9 +1390,10 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
             <STOCKITEMNAME>${xmlEscape(item.name)}</STOCKITEMNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <ISLASTDEEMEDPOSITIVE>No</ISLASTDEEMEDPOSITIVE>
+            <ISINVENTORYAFFECTED>Yes</ISINVENTORYAFFECTED>
             <RATE>${rate.toFixed(2)}/${xmlEscape(unit)}</RATE>
-            <ACTUALQTY>${qty} ${xmlEscape(unit)}</ACTUALQTY>
-            <BILLEDQTY>${qty} ${xmlEscape(unit)}</BILLEDQTY>
+            <ACTUALQTY>${qty.toFixed(3)} ${xmlEscape(unit)}</ACTUALQTY>
+            <BILLEDQTY>${qty.toFixed(3)} ${xmlEscape(unit)}</BILLEDQTY>
             <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
             <ACCOUNTINGALLOCATIONS.LIST>
                 <LEDGERNAME>Sales Account</LEDGERNAME>
@@ -2278,23 +2282,24 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
 
       const inventoryEntriesXML = inv.items
         .map(item => {
-          const rate = item.rate || 0;
-          const qty = item.qty || 1;
-          const amount = -(item.taxableAmount || 0);
+          const rate = Math.abs(Number(item.rate)) || 0;
+          const qty = Math.abs(Number(item.qty)) || 1;
+          const amount = Math.abs(Number(item.taxableAmount)) || (qty * rate);
 
           return `
             <ALLINVENTORYENTRIES.LIST>
                 <STOCKITEMNAME>${xmlEscape(item.name)}</STOCKITEMNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
                 <ISLASTDEEMEDPOSITIVE>No</ISLASTDEEMEDPOSITIVE>
+                <ISINVENTORYAFFECTED>Yes</ISINVENTORYAFFECTED>
                 <RATE>${rate.toFixed(2)}/${xmlEscape(item.unit || 'Nos')}</RATE>
-                <ACTUALQTY>${qty} ${xmlEscape(item.unit || 'Nos')}</ACTUALQTY>
-                <BILLEDQTY>${qty} ${xmlEscape(item.unit || 'Nos')}</BILLEDQTY>
-                <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+                <ACTUALQTY>${qty.toFixed(3)} ${xmlEscape(item.unit || 'Nos')}</ACTUALQTY>
+                <BILLEDQTY>${qty.toFixed(3)} ${xmlEscape(item.unit || 'Nos')}</BILLEDQTY>
+                <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
                 <ACCOUNTINGALLOCATIONS.LIST>
                     <LEDGERNAME>Sales Account</LEDGERNAME>
                     <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-                    <AMOUNT>${amount.toFixed(2)}</AMOUNT>
+                    <AMOUNT>-${amount.toFixed(2)}</AMOUNT>
                 </ACCOUNTINGALLOCATIONS.LIST>
             </ALLINVENTORYENTRIES.LIST>`;
         })
