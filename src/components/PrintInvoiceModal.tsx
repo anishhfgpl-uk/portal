@@ -285,7 +285,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
               {invoice.roundOff !== 0 && (
                 <div className="flex justify-between text-slate-500 text-[10px]">
                   <span>Round Off:</span>
-                  <span className="font-mono">₹{invoice.roundOff.toFixed(2)}</span>
+                  <span className="font-mono">₹{Math.abs(invoice.roundOff).toFixed(2)}</span>
                 </div>
               )}
 
