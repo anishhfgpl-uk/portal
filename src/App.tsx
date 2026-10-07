@@ -12,6 +12,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { CompanyProfileView } from './components/CompanyProfileView';
 import { Gstr1ReportView } from './components/Gstr1ReportView';
 import { TallyVouchersView } from './components/TallyVouchersView';
+import { CompanySelectionView } from './components/CompanySelectionView';
 
 import { Party, StockItem, Invoice, SellerInfo, TallyConfig, ImportStatusState, TallyVoucher } from './types';
 import {
@@ -531,6 +532,8 @@ const SAMPLE_INVOICES_SEED: Invoice[] = [
 export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState<string>('new-invoice');
+  // Tally-style startup: company must be selected before the working area opens.
+  const [companySelectionOpen, setCompanySelectionOpen] = useState<boolean>(true);
 
   // Master Data
   const [parties, setParties] = useState<Party[]>(() =>
@@ -874,6 +877,7 @@ export default function App() {
   // Company Profile Handlers
   const handleSelectCompany = (company: SellerInfo) => {
     setSellerInfo(company);
+    persistStoredJson('tally_active_company_key', getCompanyKey(company));
     setTallyConfig((prev) => ({
       ...prev,
       companyName: company.name,
@@ -917,6 +921,18 @@ export default function App() {
       }
       return filtered;
     });
+  };
+
+  const handleUpsertCompanyFromSelection = (company: SellerInfo) => {
+    const existing = companies.find(
+      (c) => c.name.trim().toLowerCase() === company.name.trim().toLowerCase() ||
+        Boolean(company.gstin && c.gstin && c.gstin.toLowerCase() === company.gstin.toLowerCase())
+    );
+    if (existing) {
+      handleUpdateCompany({ ...company, id: existing.id });
+    } else {
+      handleAddCompany(company);
+    }
   };
 
   // Party handlers
@@ -1042,6 +1058,20 @@ export default function App() {
 
     alert('✅ Sample Debtors, Stock Items, and Invoices loaded successfully!');
   };
+
+  if (companySelectionOpen) {
+    return (
+      <CompanySelectionView
+        companies={companies}
+        currentCompany={sellerInfo}
+        tallyConfig={tallyConfig}
+        tallyStatus={tallyStatus}
+        onSelectCompany={handleSelectCompany}
+        onUpsertCompany={handleUpsertCompanyFromSelection}
+        onContinue={() => setCompanySelectionOpen(false)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex font-sans antialiased text-slate-900 selection:bg-blue-600 selection:text-white">
