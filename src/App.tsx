@@ -178,8 +178,20 @@ function readStoredJson<T>(key: string, fallback: T, validate?: (value: unknown)
     if (validate && !validate(parsed)) return fallback;
     return parsed as T;
   } catch {
-    localStorage.removeItem(key);
+    try { localStorage.removeItem(key); } catch {}
     return fallback;
+  }
+}
+
+function persistStoredJson(key: string, value: unknown): boolean {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (err) {
+    // A large Tally master import can exceed browser localStorage quota.
+    // Never let persistence failure crash the React tree and show a blank page.
+    console.warn('LocalStorage persistence skipped for', key, err);
+    return false;
   }
 }
 
@@ -638,7 +650,7 @@ export default function App() {
 
   // Sync to LocalStorage
   useEffect(() => {
-    localStorage.setItem('tally_parties', JSON.stringify(parties));
+    persistStoredJson('tally_parties', parties);
   }, [parties]);
 
   useEffect(() => {
