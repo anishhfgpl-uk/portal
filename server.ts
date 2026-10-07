@@ -22,28 +22,57 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() })
   );
 
-  // Durable cloud snapshot: synced company data remains available even when Tally/office is offline.
-  const cloudPool = process.env.DATABASE_URL
-    ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 })
-    : null;
+  // Durable cloud storage is partitioned by company. Tally is never allowed to delete it.
+  const cloudPool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 }) : null;
   let cloudTableReady: Promise<void> | null = null;
   const ensureCloudTable = async () => {
     if (!cloudPool) return;
-    if (!cloudTableReady) {
-      cloudTableReady = cloudPool.query("CREATE TABLE IF NOT EXISTS portal_cloud_data (id TEXT PRIMARY KEY, snapshot JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").then(() => undefined);
-    }
+    if (!cloudTableReady) cloudTableReady = cloudPool.query("CREATE TABLE IF NOT EXISTS portal_cloud_data (id TEXT PRIMARY KEY, snapshot JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").then(() => undefined);
     await cloudTableReady;
   };
+  const cloudCompanyKey = (company: any) => {
+    const gstin = String(company?.gstin || '').trim().toLowerCase();
+    const guid = String(company?.tallyGuid || '').trim().toLowerCase();
+    const name = String(company?.name || '').trim().toLowerCase();
+    return (gstin || guid || name).replace(/[^a-z0-9]+/g, '-');
+  };
+  const emptyCompanyData = () => ({ company: null, parties: [], stockItems: [], invoices: [], tallyVouchers: [] });
 
   app.get("/api/cloud-data", async (_req, res) => {
-    if (!cloudPool) return res.json({ exists: false, cloud: false });
+    if (!cloudPool) return res.json({ exists: false, cloud: false, dataByCompany: {} });
     try {
       await ensureCloudTable();
-      const result = await cloudPool.query("SELECT snapshot, updated_at FROM portal_cloud_data WHERE id = $1", ["main"]);
-      if (!result.rows[0]) return res.json({ exists: false, cloud: true });
-      return res.json({ exists: true, cloud: true, updatedAt: result.rows[0].updated_at, ...result.rows[0].snapshot });
+      const result = await cloudPool.query("SELECT id, snapshot, updated_at FROM portal_cloud_data ORDER BY updated_at ASC");
+      const dataByCompany: Record<string, any> = {};
+      const companies: any[] = [];
+      for (const row of result.rows) {
+        if (row.id !== 'main') {
+          const key = row.id;
+          dataByCompany[key] = { ...emptyCompanyData(), ...(row.snapshot || {}) };
+          if (dataByCompany[key].company?.name) companies.push(dataByCompany[key].company);
+          continue;
+        }
+        const old = row.snapshot || {};
+        const oldCompanies = Array.isArray(old.companies) ? old.companies : [];
+        const fallbackCompany = old.sellerInfo || oldCompanies[0] || null;
+        const sourceCompanies = oldCompanies.length ? oldCompanies : (fallbackCompany ? [fallbackCompany] : []);
+        sourceCompanies.forEach((company: any) => {
+          const key = cloudCompanyKey(company); if (!key) return;
+          const gst = String(company?.gstin || '').trim().toLowerCase(), name = String(company?.name || '').trim().toLowerCase();
+          const matchesInvoice = (inv: any) => (gst && String(inv?.sellerGstin || '').trim().toLowerCase() === gst) || (name && String(inv?.sellerName || '').trim().toLowerCase() === name);
+          const current = dataByCompany[key] || emptyCompanyData();
+          current.company = company;
+          current.parties = (old.parties || []).map((p: any) => ({ ...p, companyKey: p.companyKey || key }));
+          current.stockItems = (old.stockItems || []).map((i: any) => ({ ...i, companyKey: i.companyKey || key }));
+          current.invoices = (old.invoices || []).filter(matchesInvoice).map((i: any) => ({ ...i, companyKey: i.companyKey || key }));
+          current.tallyVouchers = (old.tallyVouchers || []).filter((v: any) => !v.companyKey || v.companyKey === key).map((v: any) => ({ ...v, companyKey: v.companyKey || key }));
+          dataByCompany[key] = current;
+          if (!companies.some((c) => cloudCompanyKey(c) === key)) companies.push(company);
+        });
+      }
+      return res.json({ exists: companies.length > 0, cloud: true, companies, dataByCompany, updatedAt: result.at(-1)?.updated_at || null });
     } catch (error: any) {
-      return res.status(503).json({ exists: false, cloud: true, error: error?.message || "Cloud storage unavailable" });
+      return res.status(503).json({ exists: false, cloud: true, dataByCompany: {}, error: error?.message || "Cloud storage unavailable" });
     }
   });
 
@@ -51,21 +80,22 @@ async function startServer() {
     if (!cloudPool) return res.status(503).json({ ok: false, error: "Cloud database is not configured" });
     try {
       await ensureCloudTable();
-      const allowed = {
-        companies: Array.isArray(req.body?.companies) ? req.body.companies : [],
-        sellerInfo: req.body?.sellerInfo || null,
+      const companyKey = String(req.body?.companyKey || '').trim();
+      const company = req.body?.company || null;
+      if (!companyKey || !company?.name) return res.status(400).json({ ok: false, error: "companyKey and company are required" });
+      const snapshot = {
+        company,
         parties: Array.isArray(req.body?.parties) ? req.body.parties : [],
         stockItems: Array.isArray(req.body?.stockItems) ? req.body.stockItems : [],
-        invoices: Array.isArray(req.body?.invoices) ? req.body.invoices : [],
-        tallyVouchers: Array.isArray(req.body?.tallyVouchers) ? req.body.tallyVouchers : [],
+        invoices: Array.isArray(req.body?.invoices) ? req.body.invoices.map((i: any) => ({ ...i, companyKey: i.companyKey || companyKey })) : [],
+        tallyVouchers: Array.isArray(req.body?.tallyVouchers) ? req.body.tallyVouchers.map((v: any) => ({ ...v, companyKey: v.companyKey || companyKey })) : [],
       };
-      await cloudPool.query("INSERT INTO portal_cloud_data (id, snapshot, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()", ["main", JSON.stringify(allowed)]);
-      return res.json({ ok: true, cloud: true, updatedAt: new Date().toISOString() });
+      await cloudPool.query("INSERT INTO portal_cloud_data (id, snapshot, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()", [companyKey, JSON.stringify(snapshot)]);
+      return res.json({ ok: true, cloud: true, companyKey, updatedAt: new Date().toISOString() });
     } catch (error: any) {
       return res.status(503).json({ ok: false, error: error?.message || "Cloud save failed" });
     }
   });
-
   // Outbound office polling fallback: the office connector polls this hosted endpoint.
   const pendingBridgeRequests = new Map<string, { xml: string; resolve: (value: any) => void }>();
   const bridgeQueue: string[] = [];
