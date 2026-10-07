@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import { Pool } from "pg";
 
 async function startServer() {
   const app = express();
@@ -20,6 +21,50 @@ async function startServer() {
   app.get("/api/health", (_req, res) =>
     res.json({ status: "ok", timestamp: new Date().toISOString() })
   );
+
+  // Durable cloud snapshot: synced company data remains available even when Tally/office is offline.
+  const cloudPool = process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 })
+    : null;
+  let cloudTableReady: Promise<void> | null = null;
+  const ensureCloudTable = async () => {
+    if (!cloudPool) return;
+    if (!cloudTableReady) {
+      cloudTableReady = cloudPool.query("CREATE TABLE IF NOT EXISTS portal_cloud_data (id TEXT PRIMARY KEY, snapshot JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").then(() => undefined);
+    }
+    await cloudTableReady;
+  };
+
+  app.get("/api/cloud-data", async (_req, res) => {
+    if (!cloudPool) return res.json({ exists: false, cloud: false });
+    try {
+      await ensureCloudTable();
+      const result = await cloudPool.query("SELECT snapshot, updated_at FROM portal_cloud_data WHERE id = $1", ["main"]);
+      if (!result.rows[0]) return res.json({ exists: false, cloud: true });
+      return res.json({ exists: true, cloud: true, updatedAt: result.rows[0].updated_at, ...result.rows[0].snapshot });
+    } catch (error: any) {
+      return res.status(503).json({ exists: false, cloud: true, error: error?.message || "Cloud storage unavailable" });
+    }
+  });
+
+  app.put("/api/cloud-data", async (req, res) => {
+    if (!cloudPool) return res.status(503).json({ ok: false, error: "Cloud database is not configured" });
+    try {
+      await ensureCloudTable();
+      const allowed = {
+        companies: Array.isArray(req.body?.companies) ? req.body.companies : [],
+        sellerInfo: req.body?.sellerInfo || null,
+        parties: Array.isArray(req.body?.parties) ? req.body.parties : [],
+        stockItems: Array.isArray(req.body?.stockItems) ? req.body.stockItems : [],
+        invoices: Array.isArray(req.body?.invoices) ? req.body.invoices : [],
+        tallyVouchers: Array.isArray(req.body?.tallyVouchers) ? req.body.tallyVouchers : [],
+      };
+      await cloudPool.query("INSERT INTO portal_cloud_data (id, snapshot, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()", ["main", JSON.stringify(allowed)]);
+      return res.json({ ok: true, cloud: true, updatedAt: new Date().toISOString() });
+    } catch (error: any) {
+      return res.status(503).json({ ok: false, error: error?.message || "Cloud save failed" });
+    }
+  });
 
   // Outbound office polling fallback: the office connector polls this hosted endpoint.
   const pendingBridgeRequests = new Map<string, { xml: string; resolve: (value: any) => void }>();
