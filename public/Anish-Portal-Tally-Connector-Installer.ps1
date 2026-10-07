@@ -7,6 +7,7 @@ $BridgeScriptUrl="https://raw.githubusercontent.com/anishhfgpl-uk/portal/main/pu
 $Bridge=Join-Path $InstallDir "tally-bridge.cjs"
 $EnvFile=Join-Path $InstallDir ".env"
 $TaskName="Anish Portal Tally Connector"
+$Launcher=Join-Path $InstallDir "start-connector.ps1"
 
 Write-Host "=== ANISH TECHNOLOGIES - PORTAL TALLY CONNECTOR v2 ===" -ForegroundColor Cyan
 
@@ -44,12 +45,31 @@ $principal=New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
 $settings=New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
+# Create a resilient hidden launcher used by the Portal Start Connector button.
+# It starts the scheduled task whenever the bridge is not already healthy and retries once.
+$launcherText=@'
+$ErrorActionPreference="SilentlyContinue"
+$task="Anish Portal Tally Connector"
+function Test-Bridge {
+  try { $h=Invoke-RestMethod "http://127.0.0.1:8787/health" -TimeoutSec 3; return [bool]$h.ok } catch { return $false }
+}
+if(-not (Test-Bridge)) {
+  & schtasks.exe /Run /TN $task | Out-Null
+  Start-Sleep -Seconds 3
+}
+if(-not (Test-Bridge)) {
+  & schtasks.exe /Run /TN $task | Out-Null
+  Start-Sleep -Seconds 5
+}
+'@
+Set-Content -Path $Launcher -Value $launcherText -Encoding UTF8
+
 # Register a website button protocol so the Portal can start the connector manually.
 $protocolRoot = "HKLM:\Software\Classes\anish-tally"
 New-Item -Path "$protocolRoot\shell\open\command" -Force | Out-Null
 Set-ItemProperty -Path $protocolRoot -Name "(Default)" -Value "URL:Anish Tally Connector"
 Set-ItemProperty -Path $protocolRoot -Name "URL Protocol" -Value ""
-$protocolCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Start-ScheduledTask -TaskName \'Anish Portal Tally Connector\'"'
+$protocolCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$Launcher+'"'
 Set-ItemProperty -Path "$protocolRoot\shell\open\command" -Name "(Default)" -Value $protocolCommand
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 2
