@@ -191,69 +191,39 @@ async function requestCompanyTally(xml: string, config: TallyConfig): Promise<{ 
 export { DEFAULT_TALLY_CONFIG };
 
 export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALLY_CONFIG): Promise<SellerInfo[]> {
-  // Tally's "List of Companies" collection returns the company currently
-  // available through the HTTP server. CompanyInfo is a report name and is
-  // not valid on TallyPrime, so never use it for active-company discovery.
-  let openName = '';
-  try {
-    const info = await requestCompanyTally(CURRENT_COMPANY_XML, config);
-    openName = currentCompanyName(info.text);
-  } catch (err) {
-    console.warn('Tally CompanyInfo query failed:', err);
-  }
+  // TallyPrime's HTTP response format varies by build. The safest discovery
+  // path is the standard Company collection, which returns the companies
+  // available to the running Tally HTTP server. Do not depend on CompanyInfo
+  // or a single "current company" tag being present.
+  const queries = [
+    CURRENT_COMPANY_MASTER_XML,
+    COMPANY_XML_FALLBACK,
+  ];
 
-  // Fetch only the active company. Never assume the first company in a
-  // multi-company response is the currently open company.
-  if (openName) {
+  for (const xml of queries) {
     try {
-      const detail = await requestCompanyTally(COMPANY_OBJECT_XML(openName), config);
-      const companies = parseCompanyXml(detail.text);
-      if (companies.length) {
-        const exact = companies.filter(c => c.name.trim().toLowerCase() === openName.trim().toLowerCase());
-        return exact.length ? exact : [companies[0]];
-      }
+      const result = await requestCompanyTally(xml, config);
+      const companies = parseCompanyXml(result.text);
+      if (companies.length > 0) return companies;
     } catch (err) {
-      console.warn('Active company object query failed:', err);
-    }
-
-    // Compatibility path: explicitly bind SVCURRENTCOMPANY for Tally builds
-    // where Object/Company export is unavailable.
-    try {
-      const escaped = openName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const masterXml = CURRENT_COMPANY_MASTER_XML.replace(
-        '<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>',
-        '<SVCURRENTCOMPANY>' + escaped + '</SVCURRENTCOMPANY><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>'
-      );
-      const master = await requestCompanyTally(masterXml, config);
-      const companies = parseCompanyXml(master.text);
-      if (companies.length) {
-        const exact = companies.filter(c => c.name.trim().toLowerCase() === openName.trim().toLowerCase());
-        return exact.length ? exact : [companies[0]];
-      }
-    } catch (err) {
-      console.warn('Active company collection query failed:', err);
+      console.warn('Tally company collection query failed:', err);
     }
   }
 
-  // Last fallback for older/custom Tally responses.
+  // Compatibility fallback: some TallyPrime builds expose the company list
+  // through the built-in "List of Companies" report. Parse any COMPANY
+  // elements/NAME attributes returned by that report.
   try {
-    const fallback = await requestCompanyTally(COMPANY_XML_FALLBACK, config);
-    const companies = parseCompanyXml(fallback.text);
-    if (companies.length) {
-      const wanted = clean(openName || config.companyName || '');
-      if (wanted) {
-        const exact = companies.filter(c => c.name.trim().toLowerCase() === wanted.trim().toLowerCase());
-        if (exact.length) return exact;
-      }
-      return companies;
-    }
+    const result = await requestCompanyTally(CURRENT_COMPANY_XML, config);
+    const companies = parseCompanyXml(result.text);
+    if (companies.length > 0) return companies;
   } catch (err) {
-    console.warn('Company profile collection fallback failed:', err);
+    console.warn('Tally List of Companies query failed:', err);
   }
 
-  throw new Error(openName
-    ? `Tally ne current company "${openName}" ka Company profile return nahi kiya.`
-    : 'Tally connected hai, lekin current/open company ka naam Tally response me nahi mila.');
+  // If the server answered successfully but did not expose company objects,
+  // surface a useful message instead of pretending the connector is offline.
+  throw new Error('Tally connected hai, lekin company list Tally response me nahi mili. Tally Prime me kam se kam ek company open karke Refresh from Tally dabayein.');
 }
 export function parseCompaniesXML(xml: string): SellerInfo[] {
   return parseCompanyXml(xml);
