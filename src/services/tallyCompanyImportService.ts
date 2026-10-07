@@ -230,6 +230,7 @@ export async function fetchCompaniesFromTally(config: TallyConfig = DEFAULT_TALL
   // available to the running Tally HTTP server. Do not depend on CompanyInfo
   // or a single "current company" tag being present.
   const queries = [
+    CURRENT_COMPANY_XML,
     CURRENT_COMPANY_MASTER_XML,
     COMPANY_XML_FALLBACK,
   ];
