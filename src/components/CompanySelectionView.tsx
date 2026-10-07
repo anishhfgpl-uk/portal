@@ -40,6 +40,7 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
         try {
           await refreshFromTally();
           setStartingConnector(false);
+          setMessage('✅ Connector Connected — Tally se connection successful hai.');
           return;
         } catch {
           await new Promise(resolve => window.setTimeout(resolve, 2000));
