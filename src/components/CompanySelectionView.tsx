@@ -27,26 +27,37 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
   const [startingConnector, setStartingConnector] = useState(false);
 
   const startConnector = () => {
+    if (startingConnector) return;
     setStartingConnector(true);
-    setMessage('Office Connector start kiya ja raha hai...');
-    try { window.location.href = 'anish-tally://start'; } catch {}
-    window.setTimeout(async () => {
-      setMessage('Connector start command bhej diya gaya. Portal se Tally link verify kiya ja raha hai...');
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        try {
-          const imported = await refreshFromTally();
-          if (imported.length > 0) {
-            setStartingConnector(false);
-            setMessage('✅ Connector Connected — Portal ↔ Tally link active.');
-            return;
-          }
-        } catch {}
-        if (attempt < 4) await new Promise(resolve => window.setTimeout(resolve, 2000));
-      }
+    setMessage('Office Connector start command bheja ja raha hai...');
+
+    try {
+      window.location.href = 'anish-tally://start';
+    } catch {
       setStartingConnector(false);
-      setMessage('❌ Connector start hua, lekin Portal ↔ Tally link verify nahi hua. Tally Prime aur connector check karke dobara dabayein.');
-    }, 1200);
+      setMessage('❌ Connector button Windows par registered nahi hai. Connector installer ek baar Administrator ke roop mein run karein.');
+      return;
+    }
+
+    // Single-shot launch: browser button must not repeatedly start/retry the task.
+    window.setTimeout(async () => {
+      try {
+        const imported = await fetchCompaniesFromTally(tallyConfig);
+        if (imported.length > 0) {
+          imported.forEach(onUpsertCompany);
+          onSelectCompany(imported[0]);
+          setMessage('✅ Connector Connected — Portal ↔ Tally link active.');
+        } else {
+          setMessage('⚠️ Connector start command bhej diya gaya. Tally company list abhi nahi mili; Refresh from Tally ek baar dabayein.');
+        }
+      } catch {
+        setMessage('⚠️ Connector start command bhej diya gaya. Tally link abhi verify nahi hua; Refresh from Tally ek baar dabayein.');
+      } finally {
+        setStartingConnector(false);
+      }
+    }, 2500);
   };
+
   const refreshFromTally = async (): Promise<SellerInfo[]> => {
     setRefreshing(true);
     setMessage('Tally Prime se company list read ho rahi hai...');
@@ -100,10 +111,10 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
                 </button>
                 <button
                   onClick={refreshFromTally}
-                disabled={refreshing}
-                className="px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                  disabled={refreshing}
+                  className="px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
                   {refreshing ? 'Reading Tally...' : 'Refresh from Tally'}
                 </button>
               </div>
