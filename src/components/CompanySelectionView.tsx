@@ -24,6 +24,21 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
 }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState('');
+  const [startingConnector, setStartingConnector] = useState(false);
+
+  const startConnector = () => {
+    setStartingConnector(true);
+    setMessage('Office Connector start kiya ja raha hai...');
+    try {
+      window.location.href = 'anish-tally://start';
+    } catch {
+      // The custom protocol is handled by the Windows connector installer.
+    }
+    window.setTimeout(() => {
+      setStartingConnector(false);
+      setMessage('Connector start command bhej diya gaya. Tally 9000 chalu ho to Refresh from Tally dabayein.');
+    }, 1800);
+  };
 
   const refreshFromTally = async () => {
     setRefreshing(true);
@@ -66,14 +81,24 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
                 <h2 className="font-bold text-slate-900">Company List</h2>
                 <p className="text-xs text-slate-500 mt-1">{companies.length} saved company{companies.length === 1 ? '' : 'ies'}</p>
               </div>
-              <button
-                onClick={refreshFromTally}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={startConnector}
+                  disabled={startingConnector}
+                  className="px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                >
+                  <Wifi className="w-4 h-4" />
+                  {startingConnector ? 'Starting...' : 'Start Connector'}
+                </button>
+                <button
+                  onClick={refreshFromTally}
                 disabled={refreshing}
                 className="px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
               >
                 <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                {refreshing ? 'Reading Tally...' : 'Refresh from Tally'}
-              </button>
+                  {refreshing ? 'Reading Tally...' : 'Refresh from Tally'}
+                </button>
+              </div>
             </div>
 
             {message && (
