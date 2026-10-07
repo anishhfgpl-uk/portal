@@ -607,6 +607,55 @@ export default function App() {
     };
   });
 
+  // Cloud data is the source of truth after a successful sync. Tally is only used for refresh/import.
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<'loading' | 'ready' | 'offline'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/cloud-data')
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('Cloud data unavailable')))
+      .then((snapshot) => {
+        if (cancelled) return;
+        if (snapshot?.exists) {
+          if (Array.isArray(snapshot.companies)) setCompanies(snapshot.companies.filter((c: SellerInfo) => !isDemoCompany(c)));
+          if (snapshot.sellerInfo?.name && !isDemoCompany(snapshot.sellerInfo)) setSellerInfo(snapshot.sellerInfo);
+          if (Array.isArray(snapshot.parties)) setParties(snapshot.parties);
+          if (Array.isArray(snapshot.stockItems)) setStockItems(snapshot.stockItems);
+          if (Array.isArray(snapshot.invoices)) setInvoices(snapshot.invoices);
+          if (Array.isArray(snapshot.tallyVouchers)) setTallyVouchers(snapshot.tallyVouchers);
+        }
+        setCloudStatus('ready');
+        setCloudReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCloudStatus('offline');
+          setCloudReady(true); // Keep working from local saved data when cloud is temporarily unavailable.
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudReady || cloudStatus !== 'ready' || !sellerInfo.name || isDemoCompany(sellerInfo)) return;
+    const timer = window.setTimeout(() => {
+      fetch('/api/cloud-data', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companies: companies.filter((c) => !isDemoCompany(c)),
+          sellerInfo,
+          parties,
+          stockItems,
+          invoices,
+          tallyVouchers,
+        }),
+      }).catch(() => setCloudStatus('offline'));
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [cloudReady, cloudStatus, companies, sellerInfo, parties, stockItems, invoices, tallyVouchers]);
+
   // Tally Health & Status
   const [tallyStatus, setTallyStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   const [importStatus, setImportStatus] = useState<ImportStatusState>({
