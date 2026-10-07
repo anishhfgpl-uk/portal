@@ -34,7 +34,7 @@ async function startServer() {
     const gstin = String(company?.gstin || '').trim().toLowerCase();
     const guid = String(company?.tallyGuid || '').trim().toLowerCase();
     const name = String(company?.name || '').trim().toLowerCase();
-    return (gstin || guid || name).replace(/[^a-z0-9]+/g, '-');
+    return (guid || gstin || name).replace(/[^a-z0-9]+/g, '-');
   };
   const emptyCompanyData = () => ({ company: null, parties: [], stockItems: [], invoices: [], tallyVouchers: [] });
 
@@ -47,8 +47,14 @@ async function startServer() {
       const companies: any[] = [];
       for (const row of result.rows) {
         if (row.id !== 'main') {
-          const key = row.id;
-          dataByCompany[key] = { ...emptyCompanyData(), ...(row.snapshot || {}) };
+          const stored = row.snapshot || {};
+          const key = cloudCompanyKey(stored.company) || row.id;
+          const current = dataByCompany[key] || emptyCompanyData();
+          dataByCompany[key] = { ...current, ...stored };
+          dataByCompany[key].parties = Array.isArray(current.parties) ? [...current.parties, ...(stored.parties || [])] : (stored.parties || []);
+          dataByCompany[key].stockItems = Array.isArray(current.stockItems) ? [...current.stockItems, ...(stored.stockItems || [])] : (stored.stockItems || []);
+          dataByCompany[key].invoices = Array.isArray(current.invoices) ? [...current.invoices, ...(stored.invoices || [])] : (stored.invoices || []);
+          dataByCompany[key].tallyVouchers = Array.isArray(current.tallyVouchers) ? [...current.tallyVouchers, ...(stored.tallyVouchers || [])] : (stored.tallyVouchers || []);
           if (dataByCompany[key].company?.name) companies.push(dataByCompany[key].company);
           continue;
         }
