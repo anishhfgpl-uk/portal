@@ -46,6 +46,8 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingParty, setEditingParty] = useState<Party | null>(null);
   const [selectedPartyIds, setSelectedPartyIds] = useState<Set<string>>(new Set());
+  const [partyPage, setPartyPage] = useState(1);
+  const PARTY_PAGE_SIZE = 200;
 
   // File upload ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,6 +72,10 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
       (p.mobile && p.mobile.includes(searchTerm))
     );
   });
+
+  const totalPartyPages = Math.max(1, Math.ceil(filteredParties.length / PARTY_PAGE_SIZE));
+  const safePartyPage = Math.min(partyPage, totalPartyPages);
+  const visibleParties = filteredParties.slice((safePartyPage - 1) * PARTY_PAGE_SIZE, safePartyPage * PARTY_PAGE_SIZE);
 
   const openAddModal = () => {
     setEditingParty(null);
@@ -307,12 +313,12 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
                     <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        checked={filteredParties.length > 0 && filteredParties.every((party) => selectedPartyIds.has(party.id))}
+                        checked={visibleParties.length > 0 && visibleParties.every((party) => selectedPartyIds.has(party.id))}
                         onChange={(e) => {
                           setSelectedPartyIds((prev) => {
                             const next = new Set(prev);
-                            if (e.target.checked) filteredParties.forEach((party) => next.add(party.id));
-                            else filteredParties.forEach((party) => next.delete(party.id));
+                            if (e.target.checked) visibleParties.forEach((party) => next.add(party.id));
+                            else visibleParties.forEach((party) => next.delete(party.id));
                             return next;
                           });
                         }}
@@ -330,7 +336,7 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-xs">
-                {filteredParties.map((party) => (
+                {visibleParties.map((party) => (
                   <tr key={party.id} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-4">
                       <div className="flex items-start gap-2">
@@ -419,6 +425,19 @@ export const PartyMasterView: React.FC<PartyMasterViewProps> = ({
           </div>
         )}
       </div>
+
+      {filteredParties.length > PARTY_PAGE_SIZE && (
+        <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="text-slate-500 font-semibold">
+            Showing {((safePartyPage - 1) * PARTY_PAGE_SIZE) + 1}-{Math.min(safePartyPage * PARTY_PAGE_SIZE, filteredParties.length)} of {filteredParties.length} parties
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={safePartyPage <= 1} onClick={() => setPartyPage((p) => Math.max(1, p - 1))} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+            <span className="px-2 font-bold text-slate-700">Page {safePartyPage} / {totalPartyPages}</span>
+            <button type="button" disabled={safePartyPage >= totalPartyPages} onClick={() => setPartyPage((p) => Math.min(totalPartyPages, p + 1))} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+          </div>
+        </div>
+      )}
 
       {/* Add / Edit Party Modal */}
       {isModalOpen && (
