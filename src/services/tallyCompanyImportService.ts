@@ -53,7 +53,7 @@ function parseCompanyXml(xml: string): SellerInfo[] {
     });
   }
 
-  const out: SellerInfo[] = [];
+  // TallyPrime may expose company names only as NAME attributes in the\n  // List of Companies response. Recover those names from the raw XML too.\n  if (candidates.length === 0) {\n    const raw = String(xml || '');\n    const re = /<COMPANY\\b[^>]*\\bNAME\\s*=\\s*["']([^"']+)["'][^>]*>/gi;\n    let match: RegExpExecArray | null;\n    while ((match = re.exec(raw))) {\n      const name = clean(match[1]);\n      if (!name) continue;\n      const stub = doc.createElement('COMPANY');\n      stub.setAttribute('NAME', name);\n      addCandidate(stub);\n    }\n  }\n\n  const out: SellerInfo[] = [];
   const seen = new Set<string>();
 
   candidates.forEach((comp, index) => {
