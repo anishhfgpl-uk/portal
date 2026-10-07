@@ -129,47 +129,33 @@ export const TALLY_XML_QUERIES = {
 </ENVELOPE>`,
 
   DEBTOR_COLLECTION: `<ENVELOPE>
-    <HEADER>
-        <VERSION>1</VERSION>
-        <TALLYREQUEST>Export</TALLYREQUEST>
-        <TYPE>Collection</TYPE>
-        <ID>DebtorCollection</ID>
-    </HEADER>
-    <BODY>
-        <DESC>
-            <STATICVARIABLES>
-                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-            </STATICVARIABLES>
-            <TDL>
-                <TDLMESSAGE>
-                    <COLLECTION NAME="DebtorCollection" ISMODIFY="No">
-                        <TYPE>Ledger</TYPE>
-                        <CHILDOF>$$GroupSundryDebtors</CHILDOF>
-                        <BELONGSTO>Yes</BELONGSTO>
-                        <FETCH>
-                            NAME,
-                            ADDRESS,
-                            LEDGERPHONE,
-                            LEDGERMOBILE,
-                            PINCODE,
-                            GSTIN,
-                            PARTYGSTIN,
-                            GSTREGISTRATIONTYPE,
-                            STATENAME,
-                            LEDGERPAN,
-                            COUNTRYNAME,
-                            OPENINGBALANCE,
-                            PARENT,
-                            GUID,
-                            MASTERID
-                        </FETCH>
-                    </COLLECTION>
-                </TDLMESSAGE>
-            </TDL>
-        </DESC>
-    </BODY>
-</ENVELOPE>`,
-
+    <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>DebtorCollection</ID></HEADER>
+    <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+      <TDL><TDLMESSAGE>
+        <COLLECTION NAME="DebtorCollection" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes" ISOPTION="No" ISINTERNAL="No">
+          <TYPE>Ledger</TYPE>
+          <CHILDOF>$$GroupSundryDebtors</CHILDOF>
+          <BELONGSTO>Yes</BELONGSTO>
+          <FETCH>NAME,ADDRESS,LEDGERPHONE,LEDGERMOBILE,PINCODE,GSTIN,PARTYGSTIN,GSTREGISTRATIONTYPE,STATENAME,LEDGERPAN,COUNTRYNAME,OPENINGBALANCE,PARENT,GUID,MASTERID</FETCH>
+        </COLLECTION>
+      </TDLMESSAGE></TDL>
+    </DESC></BODY>
+  </ENVELOPE>`,
+  DEBTOR_COLLECTION_FALLBACK: `<ENVELOPE>
+    <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
+    <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+      <TDL><TDLMESSAGE>
+        <COLLECTION NAME="List of Ledgers" ISMODIFY="Yes">
+          <ADD>CHILD OF : $$GroupSundryDebtors</ADD>
+          <NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>Address</NATIVEMETHOD>
+          <NATIVEMETHOD>LedgerPhone</NATIVEMETHOD><NATIVEMETHOD>LedgerMobile</NATIVEMETHOD><NATIVEMETHOD>PINCODE</NATIVEMETHOD>
+          <NATIVEMETHOD>GSTIN</NATIVEMETHOD><NATIVEMETHOD>PartyGSTIN</NATIVEMETHOD><NATIVEMETHOD>GSTRegistrationType</NATIVEMETHOD>
+          <NATIVEMETHOD>StateName</NATIVEMETHOD><NATIVEMETHOD>LedgerPAN</NATIVEMETHOD><NATIVEMETHOD>CountryName</NATIVEMETHOD>
+          <NATIVEMETHOD>OpeningBalance</NATIVEMETHOD><NATIVEMETHOD>GUID</NATIVEMETHOD><NATIVEMETHOD>MASTERID</NATIVEMETHOD>
+        </COLLECTION>
+      </TDLMESSAGE></TDL>
+    </DESC></BODY>
+  </ENVELOPE>`,
   STOCK_ITEM_COLLECTION: `<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
@@ -562,8 +548,30 @@ export async function fetchCompaniesFromTally(
 export async function fetchDebtorsFromTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG
 ): Promise<Party[]> {
-  const result = await sendTallyRequest(TALLY_XML_QUERIES.DEBTOR_COLLECTION, config);
-  return parseDebtorsXML(result.text);
+  const queries = [
+    TALLY_XML_QUERIES.DEBTOR_COLLECTION,
+    TALLY_XML_QUERIES.DEBTOR_COLLECTION_FALLBACK,
+  ];
+  const merged = new Map<string, Party>();
+  let lastError: any = null;
+
+  for (const query of queries) {
+    try {
+      const result = await sendTallyRequest(query, config);
+      const rows = parseDebtorsXML(result.text);
+      for (const row of rows) {
+        const key = row.name.trim().toLowerCase();
+        if (key) merged.set(key, row);
+      }
+      if (merged.size > 0) break;
+    } catch (err) {
+      lastError = err;
+      console.warn('Tally debtor collection query failed, trying fallback:', err);
+    }
+  }
+
+  if (merged.size === 0 && lastError) throw lastError;
+  return Array.from(merged.values());
 }
 
 /**
