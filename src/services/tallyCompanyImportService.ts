@@ -26,8 +26,29 @@ function parseDocument(xml: string): Document | null {
 }
 
 function parseCompanyXml(xml: string): SellerInfo[] {
-  const doc = parseDocument(xml);
-  if (!doc) return [];
+  const raw = String(xml || '');
+  const doc = parseDocument(raw);
+  // Tally can return a response containing valid company NAME attributes even
+  // when the surrounding XML is malformed or wrapped differently by the bridge.
+  // Recover those names independently so discovery does not depend on DOM parsing.
+  const rawNames: string[] = [];
+  const nameRegex = /<(?:COMPANY|CURRENTCOMPANY|CURRENT_COMPANY)\\b[^>]*\\bNAME\\s*=\\s*["']([^"']+)["'][^>]*>/gi;
+  let rawMatch: RegExpExecArray | null;
+  while ((rawMatch = nameRegex.exec(raw))) {
+    const name = clean(rawMatch[1]);
+    if (name && !rawNames.some(existing => existing.toLowerCase() === name.toLowerCase())) rawNames.push(name);
+  }
+
+  if (!doc) {
+    return rawNames.map((name, index) => ({
+      id: `comp-tally-${index + 1}-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
+      name,
+      mailingName: name,
+      address: '', state: '', stateCode: '', country: 'India', pincode: '', phone: '', mobile: '',
+      email: '', website: '', gstin: '', pan: '', financialYearFrom: '', booksBeginningFrom: '',
+      currencySymbol: '₹', currencyFormalName: 'INR', tallyGuid: '', bankName: '', bankAccountNo: '', bankIfsc: '',
+    }));
+  }
 
   const candidates: Element[] = [];
   const addCandidate = (el: Element | null | undefined) => {
