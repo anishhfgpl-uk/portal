@@ -211,7 +211,8 @@ const getCompanyKey = (company: SellerInfo | null | undefined): string => {
   const gstin = String(company?.gstin || '').trim().toLowerCase();
   const guid = String(company?.tallyGuid || '').trim().toLowerCase();
   const name = String(company?.name || '').trim().toLowerCase();
-  return (gstin || guid || name).replace(/[^a-z0-9]+/g, '-');
+  // Tally GUID is the most stable company identity. GSTIN/name can change or be parsed differently between refreshes.
+  return (guid || gstin || name).replace(/[^a-z0-9]+/g, '-');
 };
 
 const EMPTY_SELLER_INFO: SellerInfo = {
