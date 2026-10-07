@@ -29,25 +29,22 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
   const startConnector = () => {
     setStartingConnector(true);
     setMessage('Office Connector start kiya ja raha hai...');
-    try {
-      window.location.href = 'anish-tally://start';
-    } catch {
-      // The custom protocol is handled by the Windows connector installer.
-    }
+    try { window.location.href = 'anish-tally://start'; } catch {}
     window.setTimeout(async () => {
-      setMessage('Connector start command bhej diya gaya. Tally connection check ki ja rahi hai...');
-      for (let attempt = 0; attempt < 4; attempt += 1) {
+      setMessage('Connector start command bhej diya gaya. Portal se Tally link verify kiya ja raha hai...');
+      for (let attempt = 0; attempt < 5; attempt += 1) {
         try {
-          await refreshFromTally();
-          setStartingConnector(false);
-          setMessage('✅ Connector Connected — Tally se connection successful hai.');
-          return;
-        } catch {
-          await new Promise(resolve => window.setTimeout(resolve, 2000));
-        }
+          const imported = await refreshFromTally();
+          if (imported.length > 0) {
+            setStartingConnector(false);
+            setMessage('✅ Connector Connected — Portal ↔ Tally link active.');
+            return;
+          }
+        } catch {}
+        if (attempt < 4) await new Promise(resolve => window.setTimeout(resolve, 2000));
       }
       setStartingConnector(false);
-      setMessage('Connector start command bhej diya gaya, lekin Tally abhi reachable nahi hai. Tally Prime aur connector check karke dobara dabayein.');
+      setMessage('❌ Connector start hua, lekin Portal ↔ Tally link verify nahi hua. Tally Prime aur connector check karke dobara dabayein.');
     }, 1200);
   };
 
@@ -63,6 +60,22 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
       }
     } catch (error: any) {
       setMessage(error?.message || 'Tally company read nahi ho payi.');
+    } finally {
+      setRefreshing(false);
+    }
+  };  const refreshFromTally = async (): Promise<SellerInfo[]> => {
+    setRefreshing(true);
+    setMessage('Tally Prime se company list read ho rahi hai...');
+    try {
+      const imported = await fetchCompaniesFromTally(tallyConfig);
+      if (!imported.length) throw new Error('Tally se company list nahi mili.');
+      imported.forEach(onUpsertCompany);
+      onSelectCompany(imported[0]);
+      setMessage(`Tally company loaded: ${imported[0].name}`);
+      return imported;
+    } catch (error: any) {
+      setMessage(`❌ ${error?.message || 'Tally company read nahi ho payi.'}`);
+      throw error;
     } finally {
       setRefreshing(false);
     }
