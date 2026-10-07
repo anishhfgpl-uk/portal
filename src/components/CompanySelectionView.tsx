@@ -47,23 +47,7 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
       setMessage('❌ Connector start hua, lekin Portal ↔ Tally link verify nahi hua. Tally Prime aur connector check karke dobara dabayein.');
     }, 1200);
   };
-
-  const refreshFromTally = async () => {
-    setRefreshing(true);
-    setMessage('Tally Prime se current company read ho rahi hai...');
-    try {
-      const imported = await fetchCompaniesFromTally(tallyConfig);
-      imported.forEach(onUpsertCompany);
-      if (imported[0]) {
-        onSelectCompany(imported[0]);
-        setMessage(`Tally company loaded: ${imported[0].name}`);
-      }
-    } catch (error: any) {
-      setMessage(error?.message || 'Tally company read nahi ho payi.');
-    } finally {
-      setRefreshing(false);
-    }
-  };  const refreshFromTally = async (): Promise<SellerInfo[]> => {
+  const refreshFromTally = async (): Promise<SellerInfo[]> => {
     setRefreshing(true);
     setMessage('Tally Prime se company list read ho rahi hai...');
     try {
