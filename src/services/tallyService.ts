@@ -562,8 +562,41 @@ export async function fetchCompaniesFromTally(
 export async function fetchDebtorsFromTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG
 ): Promise<Party[]> {
-  const result = await sendTallyRequest(TALLY_XML_QUERIES.DEBTOR_COLLECTION, config);
-  return parseDebtorsXML(result.text);
+  // Tally Prime builds differ in which Ledger fields they expose. The full
+  // debtor collection can fail on one build because of a single unsupported
+  // FETCH field, so use a minimal compatible query first and retain the
+  // original query as a fallback.
+  const minimalDebtorQuery = `<ENVELOPE>
+    <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>DebtorCollectionMinimal</ID></HEADER>
+    <BODY><DESC>
+      <STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+      <TDL><TDLMESSAGE>
+        <COLLECTION NAME="DebtorCollectionMinimal" ISMODIFY="No">
+          <TYPE>Ledger</TYPE>
+          <CHILDOF>$GroupSundryDebtors</CHILDOF>
+          <BELONGSTO>Yes</BELONGSTO>
+          <FETCH>NAME,ADDRESS,LEDGERMOBILE,PINCODE,GSTIN,PARTYGSTIN,GSTREGISTRATIONTYPE,STATENAME,COUNTRYNAME,PARENT,GUID,MASTERID</FETCH>
+        </COLLECTION>
+      </TDLMESSAGE></TDL>
+    </DESC></BODY>
+  </ENVELOPE>`;
+
+  let lastError: any = null;
+  for (const query of [minimalDebtorQuery, TALLY_XML_QUERIES.DEBTOR_COLLECTION]) {
+    try {
+      const result = await sendTallyRequest(query, config);
+      if (!result?.text?.trim()) continue;
+      const parsed = parseDebtorsXML(result.text);
+      if (parsed.length > 0) return parsed;
+      // A valid empty response is still a successful Tally request.
+      const lower = result.text.toLowerCase();
+      if (!lower.includes('<lineerror>') && !lower.includes('<error>')) return [];
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Tally did not return Sundry Debtors.');
 }
 
 /**
