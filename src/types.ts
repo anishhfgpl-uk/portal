@@ -114,6 +114,8 @@ export interface Invoice {
   tallyMasterId?: string;
   tallyVoucherType?: string;
   source?: 'portal' | 'tally_import';
+  /** Stable company key used to isolate invoices between Tally companies. */
+  companyKey?: string;
   isDuplicateProtected?: boolean;
   createdAt: string;
   notes?: string;
