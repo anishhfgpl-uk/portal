@@ -43,6 +43,14 @@ $trigger=New-ScheduledTaskTrigger -AtStartup
 $principal=New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $settings=New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+
+# Register a website button protocol so the Portal can start the connector manually.
+$protocolRoot = "HKCU:\Software\Classes\anish-tally"
+New-Item -Path "$protocolRoot\shell\open\command" -Force | Out-Null
+Set-ItemProperty -Path $protocolRoot -Name "(Default)" -Value "URL:Anish Tally Connector"
+Set-ItemProperty -Path $protocolRoot -Name "URL Protocol" -Value ""
+Set-ItemProperty -Path "$protocolRoot\shell\open\command" -Name "(Default)" -Value "powershell.exe -NoProfile -WindowStyle Hidden -Command ""Start-ScheduledTask -TaskName 'Anish Portal Tally Connector'"""
+
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 2
 
