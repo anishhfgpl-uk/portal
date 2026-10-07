@@ -9,14 +9,19 @@ $EnvFile=Join-Path $InstallDir ".env"
 $TaskName="Anish Portal Tally Connector"
 $Launcher=Join-Path $InstallDir "start-connector.ps1"
 
-Write-Host "=== ANISH TECHNOLOGIES - PORTAL TALLY CONNECTOR v2 ===" -ForegroundColor Cyan
+Write-Host "=== ANISH TECHNOLOGIES - PORTAL TALLY CONNECTOR v3 ===" -ForegroundColor Cyan
 
 if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
   throw "Run PowerShell as Administrator."
 }
 
-$node=Get-Command node -ErrorAction SilentlyContinue
-if(-not $node){ throw "Node.js is not installed. Install Node.js LTS and run this installer again." }
+$BundledNode=Join-Path $InstallDir "node\node.exe"
+if(Test-Path $BundledNode){
+  $node=Get-Item $BundledNode
+}else{
+  $node=Get-Command node -ErrorAction SilentlyContinue
+}
+if(-not $node){ throw "Node.js runtime not found in $InstallDir or PATH." }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
@@ -39,10 +44,11 @@ Set-Content -Path $EnvFile -Value $envText -Encoding UTF8
 cmd.exe /c "schtasks.exe /Delete /TN ""Anish Tally Connector"" /F >nul 2>&1"
 if($LASTEXITCODE -ne 0){ Write-Host "No previous connector task found; continuing." -ForegroundColor DarkGray }
 
-$action=New-ScheduledTaskAction -Execute $node.Source -Argument $Bridge -WorkingDirectory $InstallDir
+$nodePath = if($node.PSObject.Properties.Name -contains "Source"){ $node.Source } else { $node.FullName }
+$action=New-ScheduledTaskAction -Execute $nodePath -Argument "`"$Bridge`"" -WorkingDirectory $InstallDir
 $trigger=New-ScheduledTaskTrigger -AtStartup
 $principal=New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$settings=New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable
+$settings=New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
 # Create a resilient hidden launcher used by the Portal Start Connector button.
@@ -53,14 +59,18 @@ $task="Anish Portal Tally Connector"
 function Test-Bridge {
   try { $h=Invoke-RestMethod "http://127.0.0.1:8787/health" -TimeoutSec 3; return [bool]$h.ok } catch { return $false }
 }
-if(-not (Test-Bridge)) {
-  & schtasks.exe /Run /TN $task | Out-Null
-  Start-Sleep -Seconds 3
+if(Test-Bridge){ exit 0 }
+& schtasks.exe /Run /TN $task | Out-Null
+for($i=0;$i -lt 8;$i++){
+  Start-Sleep -Seconds 1
+  if(Test-Bridge){ exit 0 }
 }
-if(-not (Test-Bridge)) {
-  & schtasks.exe /Run /TN $task | Out-Null
-  Start-Sleep -Seconds 5
+& schtasks.exe /Run /TN $task | Out-Null
+for($i=0;$i -lt 8;$i++){
+  Start-Sleep -Seconds 1
+  if(Test-Bridge){ exit 0 }
 }
+exit 1
 '@
 Set-Content -Path $Launcher -Value $launcherText -Encoding UTF8
 
@@ -99,4 +109,4 @@ Write-Host "Bridge: $BridgeUrl"
 Write-Host "Local folder: $InstallDir"
 Write-Host "Task: $TaskName"
 Write-Host ""
-Write-Host "Next: set the same token in the hosted portal as TALLY_BRIDGE_TOKEN, then use Test Connection."
+Write-Host "Portal Start Connector button uses anish-tally://start and starts this task silently."
