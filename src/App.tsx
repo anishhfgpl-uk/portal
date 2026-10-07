@@ -170,6 +170,15 @@ const SAMPLE_ITEMS: StockItem[] = [
   },
 ];
 
+function persistStoredJson<T>(key: string, value: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    // Never crash the whole app when browser storage is full/unavailable.
+    console.warn(`Could not persist ${key}; keeping the in-memory data.`, error);
+  }
+}
+
 function readStoredJson<T>(key: string, fallback: T, validate?: (value: unknown) => boolean): T {
   try {
     const raw = localStorage.getItem(key);
@@ -638,31 +647,31 @@ export default function App() {
 
   // Sync to LocalStorage
   useEffect(() => {
-    localStorage.setItem('tally_parties', JSON.stringify(parties));
+    persistStoredJson('tally_parties', parties);
   }, [parties]);
 
   useEffect(() => {
-    localStorage.setItem('tally_stock_items', JSON.stringify(stockItems));
+    persistStoredJson('tally_stock_items', stockItems);
   }, [stockItems]);
 
   useEffect(() => {
-    localStorage.setItem('tally_invoices', JSON.stringify(invoices));
+    persistStoredJson('tally_invoices', invoices);
   }, [invoices]);
 
   useEffect(() => {
-    localStorage.setItem('tally_companies', JSON.stringify(companies));
+    persistStoredJson('tally_companies', companies);
   }, [companies]);
 
   useEffect(() => {
-    localStorage.setItem('tally_seller_info', JSON.stringify(sellerInfo));
+    persistStoredJson('tally_seller_info', sellerInfo);
   }, [sellerInfo]);
 
   useEffect(() => {
-    localStorage.setItem('tally_config', JSON.stringify(tallyConfig));
+    persistStoredJson('tally_config', tallyConfig);
   }, [tallyConfig]);
 
   useEffect(() => {
-    localStorage.setItem('tally_vouchers', JSON.stringify(tallyVouchers));
+    persistStoredJson('tally_vouchers', tallyVouchers);
   }, [tallyVouchers]);
 
   // On startup, verify the office bridge and immediately replace any demo company
