@@ -607,7 +607,8 @@ export default function App() {
     };
   });
 
-  // Cloud data is the source of truth after a successful sync. Tally is only used for refresh/import.
+  const activeCompanyKey = getCompanyKey(sellerInfo);
+  // Cloud is durable, company-wise storage. Tally is only an import/refresh source.
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<'loading' | 'ready' | 'offline'>('loading');
 
@@ -618,44 +619,54 @@ export default function App() {
       .then((snapshot) => {
         if (cancelled) return;
         if (snapshot?.exists) {
-          if (Array.isArray(snapshot.companies)) setCompanies(snapshot.companies.filter((c: SellerInfo) => !isDemoCompany(c)));
-          if (snapshot.sellerInfo?.name && !isDemoCompany(snapshot.sellerInfo)) setSellerInfo(snapshot.sellerInfo);
-          if (Array.isArray(snapshot.parties)) setParties(snapshot.parties);
-          if (Array.isArray(snapshot.stockItems)) setStockItems(snapshot.stockItems);
-          if (Array.isArray(snapshot.invoices)) setInvoices(snapshot.invoices);
-          if (Array.isArray(snapshot.tallyVouchers)) setTallyVouchers(snapshot.tallyVouchers);
+          const cloudCompanies = Array.isArray(snapshot.companies) ? snapshot.companies.filter((c: SellerInfo) => !isDemoCompany(c)) : [];
+          const dataByCompany = snapshot.dataByCompany || {};
+          if (cloudCompanies.length) {
+            setCompanies((prev) => {
+              const map = new Map(prev.filter((c) => !isDemoCompany(c)).map((c) => [getCompanyKey(c), c]));
+              cloudCompanies.forEach((c: SellerInfo) => map.set(getCompanyKey(c), c));
+              return Array.from(map.values());
+            });
+          }
+          const allParties: Party[] = [], allItems: StockItem[] = [], allInvoices: Invoice[] = [], allVouchers: TallyVoucher[] = [];
+          Object.entries(dataByCompany).forEach(([companyKey, data]: [string, any]) => {
+            (Array.isArray(data?.parties) ? data.parties : []).forEach((p: Party) => allParties.push({ ...p, companyKey: p.companyKey || companyKey }));
+            (Array.isArray(data?.stockItems) ? data.stockItems : []).forEach((i: StockItem) => allItems.push({ ...i, companyKey: i.companyKey || companyKey }));
+            (Array.isArray(data?.invoices) ? data.invoices : []).forEach((inv: Invoice) => allInvoices.push({ ...inv, companyKey: inv.companyKey || companyKey }));
+            (Array.isArray(data?.tallyVouchers) ? data.tallyVouchers : []).forEach((v: TallyVoucher) => allVouchers.push({ ...v, companyKey: v.companyKey || companyKey }));
+          });
+          if (allParties.length) setParties(allParties);
+          if (allItems.length) setStockItems(allItems);
+          if (allInvoices.length) setInvoices(allInvoices);
+          if (allVouchers.length) setTallyVouchers(allVouchers);
         }
         setCloudStatus('ready');
         setCloudReady(true);
       })
       .catch(() => {
-        if (!cancelled) {
-          setCloudStatus('offline');
-          setCloudReady(true); // Keep working from local saved data when cloud is temporarily unavailable.
-        }
+        if (!cancelled) { setCloudStatus('offline'); setCloudReady(true); }
       });
     return () => { cancelled = true; };
   }, []);
 
+  // Save only the active company. An empty/offline Tally response can never erase another company.
   useEffect(() => {
-    if (!cloudReady || cloudStatus !== 'ready' || !sellerInfo.name || isDemoCompany(sellerInfo)) return;
+    if (!cloudReady || cloudStatus !== 'ready' || !sellerInfo.name || isDemoCompany(sellerInfo) || !activeCompanyKey) return;
     const timer = window.setTimeout(() => {
       fetch('/api/cloud-data', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companies: companies.filter((c) => !isDemoCompany(c)),
-          sellerInfo,
-          parties,
-          stockItems,
-          invoices,
-          tallyVouchers,
+          companyKey: activeCompanyKey,
+          company: sellerInfo,
+          parties: parties.filter((p) => String(p.companyKey || '') === activeCompanyKey),
+          stockItems: stockItems.filter((i) => String(i.companyKey || '') === activeCompanyKey),
+          invoices: invoices.filter((i) => String(i.companyKey || '') === activeCompanyKey || (!i.companyKey && ((String(i.sellerGstin || '').trim().toLowerCase() === String(sellerInfo.gstin || '').trim().toLowerCase()) || (String(i.sellerName || '').trim().toLowerCase() === String(sellerInfo.name || '').trim().toLowerCase())))),
+          tallyVouchers: tallyVouchers.filter((v) => String(v.companyKey || '') === activeCompanyKey),
         }),
       }).catch(() => setCloudStatus('offline'));
-    }, 500);
+    }, 700);
     return () => window.clearTimeout(timer);
-  }, [cloudReady, cloudStatus, companies, sellerInfo, parties, stockItems, invoices, tallyVouchers]);
-
+  }, [cloudReady, cloudStatus, activeCompanyKey, sellerInfo, parties, stockItems, invoices, tallyVouchers]);
   // Tally Health & Status
   const [tallyStatus, setTallyStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   const [importStatus, setImportStatus] = useState<ImportStatusState>({
@@ -672,7 +683,6 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
   // Company-wise view: never mix records belonging to different Tally companies.
-  const activeCompanyKey = getCompanyKey(sellerInfo);
   const companyInvoices = invoices.filter((inv) => {
     const invGstin = String(inv.sellerGstin || '').trim().toLowerCase();
     const invName = String(inv.sellerName || '').trim().toLowerCase();
@@ -752,7 +762,11 @@ export default function App() {
         const actualCompanies = importedCompanies.filter((company) => !isDemoCompany(company));
         if (actualCompanies.length > 0) {
           const activeCompany = actualCompanies[0];
-          setCompanies(actualCompanies);
+          setCompanies((prev) => {
+            const map = new Map(prev.filter((c) => !isDemoCompany(c)).map((c) => [getCompanyKey(c), c]));
+            actualCompanies.forEach((c) => map.set(getCompanyKey(c), c));
+            return Array.from(map.values());
+          });
           setSellerInfo(activeCompany);
           setTallyConfig((prev) => ({
             ...prev,
@@ -910,11 +924,13 @@ export default function App() {
 
   // Save invoice
   const handleSaveInvoice = (invoice: Invoice) => {
-    setInvoices((prev) => [invoice, ...prev.filter((i) => i.id !== invoice.id)]);
+    const ownedInvoice = { ...invoice, companyKey: invoice.companyKey || activeCompanyKey };
+    setInvoices((prev) => [ownedInvoice, ...prev.filter((i) => i.id !== invoice.id)]);
   };
 
   const handleUpdateInvoice = (invoice: Invoice) => {
-    setInvoices((prev) => prev.map((i) => (i.id === invoice.id ? invoice : i)));
+    const ownedInvoice = { ...invoice, companyKey: invoice.companyKey || activeCompanyKey };
+    setInvoices((prev) => prev.map((i) => (i.id === invoice.id ? ownedInvoice : i)));
   };
 
   const handleDeleteInvoice = (id: string) => {
@@ -944,7 +960,7 @@ export default function App() {
   };
 
   const handleAddCompany = (company: SellerInfo) => {
-    setCompanies((prev) => [company, ...prev]);
+    setCompanies((prev) => [company, ...prev.filter((c) => getCompanyKey(c) !== getCompanyKey(company))]);
     handleSelectCompany(company);
   };
 
@@ -1323,6 +1339,7 @@ export default function App() {
 
           const toAdd: Invoice[] = [];
           importedInvoices.forEach((inv) => {
+            inv.companyKey = inv.companyKey || activeCompanyKey;
             const key = inv.invoiceNo.trim().toLowerCase();
             if (!existingMap.has(key)) {
               toAdd.push(inv);
