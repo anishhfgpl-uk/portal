@@ -83,12 +83,39 @@ async function startServer() {
       const companyKey = String(req.body?.companyKey || '').trim();
       const company = req.body?.company || null;
       if (!companyKey || !company?.name) return res.status(400).json({ ok: false, error: "companyKey and company are required" });
+      // Never let a stale/partial browser state erase an already-saved company.
+      // Merge incoming records into the existing company snapshot. Matching records
+      // are updated; records missing from a partial request are preserved.
+      const existingResult = await cloudPool.query("SELECT snapshot FROM portal_cloud_data WHERE id = $1", [companyKey]);
+      const existing = existingResult.rows[0]?.snapshot || {};
+      const incomingParties = Array.isArray(req.body?.parties) ? req.body.parties : [];
+      const incomingItems = Array.isArray(req.body?.stockItems) ? req.body.stockItems : [];
+      const incomingInvoices = Array.isArray(req.body?.invoices)
+        ? req.body.invoices.map((i: any) => ({ ...i, companyKey: i.companyKey || companyKey }))
+        : [];
+      const incomingVouchers = Array.isArray(req.body?.tallyVouchers)
+        ? req.body.tallyVouchers.map((v: any) => ({ ...v, companyKey: v.companyKey || companyKey }))
+        : [];
+
+      const mergeRecords = (previous: any[], incoming: any[], key: (row: any) => string) => {
+        const map = new Map<string, any>();
+        (Array.isArray(previous) ? previous : []).forEach((row: any) => {
+          const k = key(row);
+          if (k) map.set(k, row);
+        });
+        incoming.forEach((row: any) => {
+          const k = key(row);
+          if (k) map.set(k, row);
+        });
+        return Array.from(map.values());
+      };
+
       const snapshot = {
         company,
-        parties: Array.isArray(req.body?.parties) ? req.body.parties : [],
-        stockItems: Array.isArray(req.body?.stockItems) ? req.body.stockItems : [],
-        invoices: Array.isArray(req.body?.invoices) ? req.body.invoices.map((i: any) => ({ ...i, companyKey: i.companyKey || companyKey })) : [],
-        tallyVouchers: Array.isArray(req.body?.tallyVouchers) ? req.body.tallyVouchers.map((v: any) => ({ ...v, companyKey: v.companyKey || companyKey })) : [],
+        parties: mergeRecords(existing.parties, incomingParties, (p: any) => String(p.id || p.name || '').trim().toLowerCase()),
+        stockItems: mergeRecords(existing.stockItems, incomingItems, (i: any) => String(i.id || i.name || '').trim().toLowerCase()),
+        invoices: mergeRecords(existing.invoices, incomingInvoices, (i: any) => String(i.id || i.tallyGuid || i.tallyMasterId || i.invoiceNo || '').trim().toLowerCase()),
+        tallyVouchers: mergeRecords(existing.tallyVouchers, incomingVouchers, (v: any) => String(v.id || v.tallyGuid || v.tallyMasterId || v.voucherNumber || '').trim().toLowerCase()),
       };
       await cloudPool.query("INSERT INTO portal_cloud_data (id, snapshot, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()", [companyKey, JSON.stringify(snapshot)]);
       return res.json({ ok: true, cloud: true, companyKey, updatedAt: new Date().toISOString() });
