@@ -34,10 +34,15 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
     } catch {
       // The custom protocol is handled by the Windows connector installer.
     }
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       setStartingConnector(false);
-      setMessage('Connector start command bhej diya gaya. Tally 9000 chalu ho to Refresh from Tally dabayein.');
-    }, 1800);
+      setMessage('Connector start command bhej diya gaya. Tally connection check ki ja rahi hai...');
+      try {
+        await refreshFromTally();
+      } catch {
+        setMessage('Connector start ho gaya ho sakta hai. Refresh from Tally dobara dabayein.');
+      }
+    }, 2500);
   };
 
   const refreshFromTally = async () => {
