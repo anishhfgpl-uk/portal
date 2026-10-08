@@ -22,13 +22,14 @@ import {
   Check,
   FileCode2,
 } from 'lucide-react';
-import { Invoice, SellerInfo, TallyConfig, SyncReport, Party, StockItem } from '../types';
+import { Invoice, SellerInfo, TallyConfig, SyncReport, Party, StockItem, TallyVoucher } from '../types';
 import {
   generateTallySalesVoucherXML,
   generateTallyBatchSalesVouchersXML,
   sendTallyRequest,
   exportInvoiceToTally,
   fetchSalesVouchersFromTally,
+  fetchAccountingVouchersFromTally,
   performTwoWaySync,
   getCurrentFinancialYearRange,
 } from '../services/tallyService';
@@ -77,6 +78,8 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [isTwoWaySyncing, setIsTwoWaySyncing] = useState<boolean>(false);
   const [isImportingFromTally, setIsImportingFromTally] = useState<boolean>(false);
+  const [isImportingAccountingVouchers, setIsImportingAccountingVouchers] = useState<boolean>(false);
+  const [accountingVouchers, setAccountingVouchers] = useState<TallyVoucher[]>([]);
   const [invoiceFromDate, setInvoiceFromDate] = useState<string>(() => {
     const now = new Date();
     const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
@@ -254,6 +257,42 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
     }
   };
 
+  // Import bounded Receipt, Payment and Credit Note vouchers without unbounded Tally scans.
+  const handleImportAccountingVouchers = async () => {
+    setIsImportingAccountingVouchers(true);
+    setActionMessage(null);
+    try {
+      if (!invoiceFromDate || !invoiceToDate || invoiceFromDate > invoiceToDate) {
+        setActionMessage({ text: '❌ Please select a valid From Date and To Date.', type: 'error' });
+        return;
+      }
+      const result = await fetchAccountingVouchersFromTally(tallyConfig, invoiceFromDate, invoiceToDate);
+      const companyKey = ((sellerInfo.gstin || '') + '|' + (sellerInfo.name || '')).toLowerCase();
+      const scoped = result.map(v => ({ ...v, companyKey }));
+      const storageKey = 'tally_accounting_vouchers:' + companyKey;
+      const existing: TallyVoucher[] = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const map = new Map<string, TallyVoucher>();
+      [...existing, ...scoped].forEach(v => map.set((v.date + '|' + v.voucherType + '|' + v.voucherNumber).toLowerCase(), v));
+      const merged = Array.from(map.values()).sort((a,b) => b.date.localeCompare(a.date));
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+      setAccountingVouchers(merged);
+      const counts = merged.reduce((a,v) => {
+        const t = v.voucherType.toLowerCase();
+        if (t === 'receipt') a.receipt++;
+        else if (t === 'payment') a.payment++;
+        else a.creditNote++;
+        return a;
+      }, { receipt: 0, payment: 0, creditNote: 0 });
+      setActionMessage({
+        text: '✅ Accounting vouchers imported: Receipt ' + counts.receipt + ', Payment ' + counts.payment + ', Credit Note ' + counts.creditNote + '.',
+        type: 'success',
+      });
+    } catch (err: any) {
+      setActionMessage({ text: '❌ Voucher Import Failed: ' + (err?.message || 'Tally error'), type: 'error' });
+    } finally {
+      setIsImportingAccountingVouchers(false);
+    }
+  };
   // 3. Export only invoices explicitly selected by the user to Tally Prime
   const handleExportSelected = async () => {
     const selected = filteredInvoices.filter((inv) => selectedInvoiceIds.has(inv.id));
@@ -619,6 +658,16 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               <span>Import Invoices</span>
             </button>
 
+            {/* Receipt / Payment / Credit Note import */}
+            <button
+              onClick={handleImportAccountingVouchers}
+              disabled={isImportingAccountingVouchers}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-700/80 hover:bg-slate-700 text-cyan-300 rounded-xl text-xs font-bold border border-cyan-500/30 transition cursor-pointer disabled:opacity-50"
+              title="Import Receipt, Payment and Credit Note for the selected date range"
+            >
+              <ArrowDownToLine className={"w-4 h-4 " + (isImportingAccountingVouchers ? 'animate-bounce' : '')} />
+              <span>{isImportingAccountingVouchers ? 'Importing...' : 'Receipt / Payment / Credit Note'}</span>
+            </button>
             {/* Export Pending to Tally */}
             <button
               onClick={handleExportSelected}
