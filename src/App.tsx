@@ -13,6 +13,7 @@ import { CompanyProfileView } from './components/CompanyProfileView';
 import { Gstr1ReportView } from './components/Gstr1ReportView';
 import { TallyVouchersView } from './components/TallyVouchersView';
 import { CompanySelectionView } from './components/CompanySelectionView';
+import { PortalLoginView } from './components/PortalLoginView';
 
 import { Party, StockItem, Invoice, SellerInfo, TallyConfig, ImportStatusState, TallyVoucher } from './types';
 import {
@@ -608,6 +609,22 @@ export default function App() {
     };
   });
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/session', { credentials: 'include' })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('not authenticated')))
+      .then((payload) => {
+        if (!cancelled) setAuthenticated(Boolean(payload?.authenticated));
+      })
+      .catch(() => {
+        if (!cancelled) setAuthenticated(false);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecking(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const activeCompanyKey = getCompanyKey(sellerInfo);
   // Cloud is durable, company-wise storage. Tally is only an import/refresh source.
   const [cloudReady, setCloudReady] = useState(false);
@@ -1124,6 +1141,20 @@ export default function App() {
 
     alert('✅ Sample Debtors, Stock Items, and Invoices loaded successfully!');
   };
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center">
+        <div className="bg-white border border-slate-200 shadow-lg rounded-xl px-6 py-5 text-sm font-semibold text-slate-700">
+          Checking secure login...
+        </div>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return <PortalLoginView onAuthenticated={() => setAuthenticated(true)} />;
+  }
 
   if (companySelectionOpen) {
     return (
