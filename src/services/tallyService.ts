@@ -250,9 +250,10 @@ export const TALLY_XML_QUERIES = {
     </DESC></BODY>
   </ENVELOPE>`,
 
-  // Bounded native Sales voucher collection. It honors the requested period
-  // and returns voucher, inventory and ledger entries without an unbounded scan.
-  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>SalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE="Formulae" NAME="SalesVoucherInRange">$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><COLLECTION NAME="SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No"><FILTER>SalesVoucherInRange</FILTER><TYPE>Voucher</TYPE><CHILDOF>Sales</CHILDOF><BELONGSTO>Yes</BELONGSTO><NATIVEMETHOD>VoucherNumber</NATIVEMETHOD><NATIVEMETHOD>VoucherTypeName</NATIVEMETHOD><NATIVEMETHOD>Date</NATIVEMETHOD><NATIVEMETHOD>Reference</NATIVEMETHOD><NATIVEMETHOD>PartyLedgerName</NATIVEMETHOD><NATIVEMETHOD>PartyName</NATIVEMETHOD><NATIVEMETHOD>PartyGSTIN</NATIVEMETHOD><NATIVEMETHOD>StateName</NATIVEMETHOD><NATIVEMETHOD>PlaceOfSupply</NATIVEMETHOD><NATIVEMETHOD>BasicBuyerAddress</NATIVEMETHOD><NATIVEMETHOD>Narration</NATIVEMETHOD><NATIVEMETHOD>GUID</NATIVEMETHOD><NATIVEMETHOD>MASTERID</NATIVEMETHOD><NATIVEMETHOD>AllInventoryEntries</NATIVEMETHOD><NATIVEMETHOD>AllLedgerEntries</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>` ,
+  // Safe Sales-group import: use Tally's built-in $$IsSales formula so every voucher
+  // whose voucher type belongs to Sales is included, regardless of the voucher name.
+  // Date range is supplied on every request; no unbounded Day Book/Voucher scan.
+  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>GSTR1SalesVouchersSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="GSTR1SalesVouchersSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>GSTR1IsSales</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN,AllInventoryEntries.GSTOVRDIGSTRATE</FETCH><FETCH>LedgerEntries.LedgerName,LedgerEntries.Amount</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="GSTR1IsSales">$$IsSales:$VoucherTypeName</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
   // Sales Vouchers (Invoices) Collection Query for Tally Prime
   SALES_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
@@ -2223,97 +2224,84 @@ export async function fetchSalesVouchersFromTally(
   fromDate?: string,
   toDate?: string
 ): Promise<ParsedVouchersResult> {
-  const cleanDate = (value?: string) => {
-    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    return match ? `${match[1]}${match[2]}${match[3]}` : '';
+  const parseIsoDate = (value?: string) => {
+    const m = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
   };
-  const from = cleanDate(fromDate);
-  const to = cleanDate(toDate);
-
-  const addDateRange = (xml: string) => {
-    if (!from || !to) return xml;
-    return xml.replace(
-      '<STATICVARIABLES>',
-      `<STATICVARIABLES><SVFROMDATE TYPE="Date">${from}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE>`
-    );
+  const formatTallyDate = (date: Date) => {
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return \`${date.getDate()}-${names[date.getMonth()]}-${date.getFullYear()}\`;
   };
+  const from = parseIsoDate(fromDate);
+  const to = parseIsoDate(toDate);
 
-  // Tally Prime versions differ in how strictly they apply SVFROMDATE/SVTODATE
-  // to custom collections. First try the requested range, then retry without
-  // the static date variables and filter the returned vouchers locally.
-  // Never fall back to an unbounded Voucher/Day Book export: it can freeze Tally.
-  const baseQueries = [TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE];
-  const rangedQueries = baseQueries.map(addDateRange);
+  // HSFGPL's proven importer reads small sequential windows. This avoids the
+  // TallyPrime freeze caused by large month/year exports while still importing
+  // every Sales-group voucher, independent of voucher name.
+  const ranges: Array<[Date, Date]> = [];
+  if (from && to && from <= to) {
+    for (let cursor = new Date(from); cursor <= to; ) {
+      const end = new Date(cursor);
+      end.setDate(end.getDate() + 6); // 7-day window
+      if (end > to) end.setTime(to.getTime());
+      ranges.push([new Date(cursor), new Date(end)]);
+      cursor = new Date(end);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  } else {
+    const fy = getCurrentFinancialYearRange();
+    const fyFrom = parseIsoDate(fy.start)!;
+    const fyTo = parseIsoDate(fy.end)!;
+    for (let cursor = new Date(fyFrom); cursor <= fyTo; ) {
+      const end = new Date(cursor);
+      end.setDate(end.getDate() + 6);
+      if (end > fyTo) end.setTime(fyTo.getTime());
+      ranges.push([new Date(cursor), new Date(end)]);
+      cursor = new Date(end);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
 
+  const invoiceMap = new Map<string, Invoice>();
+  const parties = new Map<string, Party>();
+  const items = new Map<string, StockItem>();
   let lastError: Error | null = null;
-  const allParsed: ParsedVouchersResult[] = [];
-  const seenQueryResults = new Set<string>();
 
-  const collect = async (xmlQuery: string, localFilter: boolean) => {
+  for (const [rangeFrom, rangeTo] of ranges) {
+    const fromText = formatTallyDate(rangeFrom);
+    const toText = formatTallyDate(rangeTo);
+    const xmlQuery = TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE.replace(
+      '<STATICVARIABLES>',
+      `<STATICVARIABLES><SVFROMDATE TYPE="Date">${rangeFrom.getFullYear()}\${String(rangeFrom.getMonth()+1).padStart(2,'0')}\${String(rangeFrom.getDate()).padStart(2,'0')}</SVFROMDATE><SVTODATE TYPE="Date">${rangeTo.getFullYear()}\${String(rangeTo.getMonth()+1).padStart(2,'0')}\${String(rangeTo.getDate()).padStart(2,'0')}</SVTODATE>`
+    );
+
     try {
       const res = await sendTallyRequest(xmlQuery, config);
-      if (!res?.text?.trim()) return;
-
+      if (!res?.text?.trim()) continue;
       const parsed = parseSalesVouchersXML(res.text, sellerInfo);
-      const rangeInvoices = parsed.invoices.filter((invoice) => {
-        if (!fromDate || !toDate) return isDateInCurrentFinancialYear(invoice.invoiceDate);
-        return invoice.invoiceDate >= fromDate && invoice.invoiceDate <= toDate;
-      });
-
-      // Keep only invoices in the requested range. This also protects against
-      // Day Book/custom collections returning non-sales vouchers.
-      const filteredInvoices = localFilter ? rangeInvoices : rangeInvoices;
-      const resultKey = filteredInvoices
-        .map((i) => `${i.invoiceDate}|${i.invoiceNo}`.toLowerCase())
-        .sort()
-        .join('||');
-
-      if (filteredInvoices.length > 0 && !seenQueryResults.has(resultKey)) {
-        seenQueryResults.add(resultKey);
-        allParsed.push({
-          invoices: filteredInvoices,
-          extractedParties: parsed.extractedParties,
-          extractedItems: parsed.extractedItems,
-        });
+      for (const invoice of parsed.invoices) {
+        if (fromDate && toDate) {
+          if (invoice.invoiceDate < fromDate || invoice.invoiceDate > toDate) continue;
+        } else if (!isDateInCurrentFinancialYear(invoice.invoiceDate)) {
+          continue;
+        }
+        const key = \`String(invoice.invoiceDate).slice(0,10)|String(invoice.invoiceNo).trim().toLowerCase()|String(invoice.tallyGuid || invoice.tallyMasterId || "").trim().toLowerCase()\`;
+        invoiceMap.set(key, invoice);
       }
+      for (const p of parsed.extractedParties) parties.set(p.name.trim().toLowerCase(), p);
+      for (const i of parsed.extractedItems) items.set(i.name.trim().toLowerCase(), i);
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err?.message || err));
     }
-  };
-
-  // Pass 1: requested date range.
-  for (const xmlQuery of rangedQueries) {
-    await collect(xmlQuery, false);
   }
 
-  // Pass 2: compatibility fallback. If Tally ignored/rejected the date
-  // variables, fetch the collection normally and apply the date filter here.
-  // This is the important recovery path for Tally Prime builds where the
-  // collection does not honor SVFROMDATE/SVTODATE.
-  // No unbounded compatibility retry. If the bounded request fails, surface the error
-  // instead of sending another full-company scan to Tally.
-
-  if (allParsed.length > 0) {
-    const invoiceMap = new Map<string, Invoice>();
-    const parties = new Map<string, Party>();
-    const items = new Map<string, StockItem>();
-
-    allParsed.forEach(result => {
-      result.invoices.forEach(inv => invoiceMap.set(
-        `${String(inv.invoiceDate).slice(0, 10)}|${String(inv.invoiceNo).trim().toLowerCase()}|${String(inv.sellerGstin || sellerInfo?.gstin || '').trim().toLowerCase()}`,
-        inv
-      ));
-      result.extractedParties.forEach(p => parties.set(p.name.trim().toLowerCase(), p));
-      result.extractedItems.forEach(i => items.set(i.name.trim().toLowerCase(), i));
-    });
-
+  if (invoiceMap.size > 0) {
     return {
-      invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
+      invoices: Array.from(invoiceMap.values()).sort((a,b) => a.invoiceDate.localeCompare(b.invoiceDate)),
       extractedParties: Array.from(parties.values()),
       extractedItems: Array.from(items.values()),
     };
   }
-
   if (lastError) throw lastError;
   return { invoices: [], extractedParties: [], extractedItems: [] };
 }
