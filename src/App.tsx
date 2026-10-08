@@ -844,7 +844,7 @@ export default function App() {
             ...actualCompanies,
           ]));
           setImportStatus({
-            message: '🟢 Tally connected — actual OPEN company imported: ' + activeCompany.name,
+            message: '🟢 Tally connected — actual OPEN company imported: ' + actualCompanies[0].name,
             type: 'success',
           });
         } else {
