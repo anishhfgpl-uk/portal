@@ -2234,30 +2234,64 @@ export async function fetchSalesVouchersFromTally(
     );
   };
 
-  const queriesToTry = [
+  // Tally Prime versions differ in how strictly they apply SVFROMDATE/SVTODATE
+  // to custom collections. First try the requested range, then retry without
+  // the static date variables and filter the returned vouchers locally.
+  const baseQueries = [
     TALLY_XML_QUERIES.SALES_VOUCHERS_COLLECTION,
     TALLY_XML_QUERIES.SALES_VOUCHERS_SIMPLE,
     TALLY_XML_QUERIES.DAYBOOK_EXPORT,
-  ].map(addDateRange);
+  ];
+  const rangedQueries = baseQueries.map(addDateRange);
 
   let lastError: Error | null = null;
   const allParsed: ParsedVouchersResult[] = [];
+  const seenQueryResults = new Set<string>();
 
-  for (const xmlQuery of queriesToTry) {
+  const collect = async (xmlQuery: string, localFilter: boolean) => {
     try {
       const res = await sendTallyRequest(xmlQuery, config);
-      if (res && res.text && res.text.trim()) {
-        const parsed = parseSalesVouchersXML(res.text, sellerInfo);
-        const rangeInvoices = parsed.invoices.filter((invoice) => {
-          if (!fromDate || !toDate) return isDateInCurrentFinancialYear(invoice.invoiceDate);
-          return invoice.invoiceDate >= fromDate && invoice.invoiceDate <= toDate;
+      if (!res?.text?.trim()) return;
+
+      const parsed = parseSalesVouchersXML(res.text, sellerInfo);
+      const rangeInvoices = parsed.invoices.filter((invoice) => {
+        if (!fromDate || !toDate) return isDateInCurrentFinancialYear(invoice.invoiceDate);
+        return invoice.invoiceDate >= fromDate && invoice.invoiceDate <= toDate;
+      });
+
+      // Keep only invoices in the requested range. This also protects against
+      // Day Book/custom collections returning non-sales vouchers.
+      const filteredInvoices = localFilter ? rangeInvoices : rangeInvoices;
+      const resultKey = filteredInvoices
+        .map((i) => `${i.invoiceDate}|${i.invoiceNo}`.toLowerCase())
+        .sort()
+        .join('||');
+
+      if (filteredInvoices.length > 0 && !seenQueryResults.has(resultKey)) {
+        seenQueryResults.add(resultKey);
+        allParsed.push({
+          invoices: filteredInvoices,
+          extractedParties: parsed.extractedParties,
+          extractedItems: parsed.extractedItems,
         });
-        if (rangeInvoices.length > 0) {
-          allParsed.push({ ...parsed, invoices: rangeInvoices });
-        }
       }
     } catch (err: any) {
-      lastError = err;
+      lastError = err instanceof Error ? err : new Error(String(err?.message || err));
+    }
+  };
+
+  // Pass 1: requested date range.
+  for (const xmlQuery of rangedQueries) {
+    await collect(xmlQuery, false);
+  }
+
+  // Pass 2: compatibility fallback. If Tally ignored/rejected the date
+  // variables, fetch the collection normally and apply the date filter here.
+  // This is the important recovery path for Tally Prime builds where the
+  // collection does not honor SVFROMDATE/SVTODATE.
+  if (allParsed.length === 0 && fromDate && toDate) {
+    for (const xmlQuery of baseQueries) {
+      await collect(xmlQuery, true);
     }
   }
 
@@ -2265,6 +2299,7 @@ export async function fetchSalesVouchersFromTally(
     const invoiceMap = new Map<string, Invoice>();
     const parties = new Map<string, Party>();
     const items = new Map<string, StockItem>();
+
     allParsed.forEach(result => {
       result.invoices.forEach(inv => invoiceMap.set(
         `${String(inv.invoiceDate).slice(0, 10)}|${String(inv.invoiceNo).trim().toLowerCase()}|${String(inv.sellerGstin || sellerInfo?.gstin || '').trim().toLowerCase()}`,
@@ -2273,6 +2308,7 @@ export async function fetchSalesVouchersFromTally(
       result.extractedParties.forEach(p => parties.set(p.name.trim().toLowerCase(), p));
       result.extractedItems.forEach(i => items.set(i.name.trim().toLowerCase(), i));
     });
+
     return {
       invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
       extractedParties: Array.from(parties.values()),
