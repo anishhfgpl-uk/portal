@@ -2225,7 +2225,7 @@ export async function fetchSalesVouchersFromTally(
   toDate?: string
 ): Promise<ParsedVouchersResult> {
   const parseIsoDate = (value?: string): Date | null => {
-    const m = String(value || '').trim().match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+    const m = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return null;
     const year = Number(m[1]);
     const month = Number(m[2]);
