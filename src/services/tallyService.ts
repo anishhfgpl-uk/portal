@@ -253,7 +253,7 @@ export const TALLY_XML_QUERIES = {
   // Lightweight Sales import: keep the query item-wise but fetch only the fields
   // required to build an invoice. Large ledger/GST collections can make Tally Prime
   // appear frozen, so do not request the full LedgerEntries tree during invoice import.
-  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalIsSales</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSales">$$IsSales:$VoucherTypeName</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
+  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalIsSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesInRange">$And:$IsSales:$VoucherTypeName:$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
   // Sales Vouchers (Invoices) Collection Query for Tally Prime
   SALES_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
@@ -2259,13 +2259,13 @@ export async function fetchSalesVouchersFromTally(
     throw new Error('Unable to determine the Tally import date range.');
   }
 
-  // Tally can hang when a busy date range is fetched with inventory + ledger
-  // details in one request. Keep the user's exact From/To dates, but issue ONE
-  // calendar day per request. Sales-group filtering still includes every Sales
-  // voucher regardless of voucher type/name, and there is no hard-coded date.
+  // Keep the user's exact From/To dates, but avoid hundreds of Tally calls.
+  // The TDL filter below applies the date range inside Tally, so each request
+  // returns only Sales vouchers from that window. Use calendar-month chunks to
+  // keep each XML response reasonably small while avoiding one huge FY request.
   const ranges: Array<[Date, Date]> = [];
   for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime(); ) {
-    const end = new Date(cursor.getTime());
+    const end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
     if (end.getTime() > rangeTo.getTime()) {
       end.setTime(rangeTo.getTime());
     }
