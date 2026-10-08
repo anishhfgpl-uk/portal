@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Pool } from "pg";
+import crypto from "crypto";
 
 async function startServer() {
   const app = express();
@@ -16,6 +17,61 @@ async function startServer() {
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Bridge-Token");
     if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
+  });
+
+  // Portal authentication: credentials stay server-side in Render environment variables.
+  // Defaults are provided for first setup; set PORTAL_USER_ID and PORTAL_PASSWORD in Render to change them.
+  const portalUserId = process.env.PORTAL_USER_ID || "admin";
+  const portalPassword = process.env.PORTAL_PASSWORD || "admin123";
+  const sessionSecret = process.env.PORTAL_SESSION_SECRET || process.env.TALLY_BRIDGE_TOKEN || "change-this-session-secret";
+  const sessionCookie = "anish_portal_session";
+  const sessionPayload = (userId: string) => Buffer.from(JSON.stringify({ userId, iat: Date.now() })).toString("base64url");
+  const sessionSignature = (payload: string) => crypto.createHmac("sha256", sessionSecret).update(payload).digest("base64url");
+  const makeSession = (userId: string) => {
+    const payload = sessionPayload(userId);
+    return payload + "." + sessionSignature(payload);
+  };
+  const safeEqual = (a: string, b: string) => {
+    const aa = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+  };
+  const isAuthenticated = (req: any) => {
+    const cookieHeader = String(req.headers.cookie || "");
+    const match = cookieHeader.match(new RegExp("(?:^|;\\s*)" + sessionCookie + "=([^;]+)"));
+    if (!match) return false;
+    const token = decodeURIComponent(match[1]);
+    const dot = token.lastIndexOf(".");
+    if (dot <= 0) return false;
+    const payload = token.slice(0, dot);
+    const signature = token.slice(dot + 1);
+    if (!safeEqual(signature, sessionSignature(payload))) return false;
+    try {
+      const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+      return parsed?.userId === portalUserId;
+    } catch {
+      return false;
+    }
+  };
+
+  app.post("/api/auth/login", (req, res) => {
+    const userId = String(req.body?.userId || "");
+    const password = String(req.body?.password || "");
+    if (!safeEqual(userId, portalUserId) || !safeEqual(password, portalPassword)) {
+      return res.status(401).json({ ok: false, error: "Invalid User ID or Password." });
+    }
+    const token = makeSession(userId);
+    res.setHeader("Set-Cookie", `${sessionCookie}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=28800`);
+    return res.json({ ok: true });
+  });
+
+  app.get("/api/auth/session", (req, res) => {
+    return res.json({ authenticated: isAuthenticated(req) });
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    res.setHeader("Set-Cookie", `${sessionCookie}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`);
+    return res.json({ ok: true });
   });
 
   app.get("/api/health", (_req, res) =>
