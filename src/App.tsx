@@ -536,6 +536,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('new-invoice');
   // Tally-style startup: company must be selected before the working area opens.
   const [companySelectionOpen, setCompanySelectionOpen] = useState<boolean>(true);
+  // Secure login gate: do not render Company Selection or the portal until the server session is verified.
+  const [authenticated, setAuthenticated] = useState<boolean>(false);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
 
   // Master Data
   const [parties, setParties] = useState<Party[]>(() =>
