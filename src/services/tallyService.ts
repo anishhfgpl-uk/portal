@@ -2241,6 +2241,7 @@ export async function fetchSalesVouchersFromTally(
   // to custom collections. First try the requested range, then retry without
   // the static date variables and filter the returned vouchers locally.
   const baseQueries = [
+    TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE,
     TALLY_XML_QUERIES.SALES_VOUCHERS_COLLECTION,
     TALLY_XML_QUERIES.SALES_VOUCHERS_SIMPLE,
     TALLY_XML_QUERIES.DAYBOOK_EXPORT,
