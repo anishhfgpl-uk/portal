@@ -217,7 +217,7 @@ const getCompanyKey = (company: SellerInfo | null | undefined): string => {
 };
 
 const normalizeCompanyName = (value: unknown): string =>
-  String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  String(value || '').trim().toLowerCase().replace(/\\s+/g, ' ');
 
 const normalizeCompanyGstin = (value: unknown): string =>
   String(value || '').trim().toLowerCase();
@@ -844,7 +844,7 @@ export default function App() {
             ...actualCompanies,
           ]));
           setImportStatus({
-            message: '🟢 Tally connected — actual OPEN company imported: ' + actualCompanies[0].name,
+            message: '🟢 Tally connected — actual OPEN company imported: ' + activeCompany.name,
             type: 'success',
           });
         } else {
