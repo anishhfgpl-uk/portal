@@ -2225,23 +2225,23 @@ export async function fetchSalesVouchersFromTally(
   toDate?: string
 ): Promise<ParsedVouchersResult> {
   const parseIsoDate = (value?: string) => {
-    const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const m = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
     return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
   };
   const from = parseIsoDate(fromDate);
   const to = parseIsoDate(toDate);
   const pad = (n: number) => String(n).padStart(2, '0');
 
-  // Proven HSFGPL strategy: sequential 7-day exports. The Tally formula
-  // $$IsSales:$VoucherTypeName selects every voucher type under Sales,
-  // regardless of the voucher's actual name.
+  // Keep each Tally request deliberately small. Sales-group filtering is used
+  // so every Sales voucher is included regardless of its voucher type name.
+  // Two-day windows prevent Tally from hanging on busy months.
   const ranges: Array<[Date, Date]> = [];
   const rangeFrom = from && to && from <= to ? from : parseIsoDate(getCurrentFinancialYearRange().start)!;
   const rangeTo = from && to && from <= to ? to : parseIsoDate(getCurrentFinancialYearRange().end)!;
 
   for (let cursor = new Date(rangeFrom); cursor <= rangeTo; ) {
     const end = new Date(cursor);
-    end.setDate(end.getDate() + 6);
+    end.setDate(end.getDate() + 1);
     if (end > rangeTo) end.setTime(rangeTo.getTime());
     ranges.push([new Date(cursor), new Date(end)]);
     cursor = new Date(end);
@@ -2254,11 +2254,11 @@ export async function fetchSalesVouchersFromTally(
   let lastError: Error | null = null;
 
   for (const [rangeStart, rangeEnd] of ranges) {
-    const start = String(rangeStart.getFullYear()) + pad(rangeStart.getMonth() + 1) + pad(rangeStart.getDate());
-    const end = String(rangeEnd.getFullYear()) + pad(rangeEnd.getMonth() + 1) + pad(rangeEnd.getDate());
+    const startDate = String(rangeStart.getFullYear()) + pad(rangeStart.getMonth() + 1) + pad(rangeStart.getDate());
+    const endDate = String(rangeEnd.getFullYear()) + pad(rangeEnd.getMonth() + 1) + pad(rangeEnd.getDate());
     const xmlQuery = TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE.replace(
       '<STATICVARIABLES>',
-      '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + start + '</SVFROMDATE><SVTODATE TYPE="Date">' + end + '</SVTODATE>'
+      '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + startDate + '</SVFROMDATE><SVTODATE TYPE="Date">' + endDate + '</SVTODATE>'
     );
 
     try {
