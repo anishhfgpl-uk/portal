@@ -79,104 +79,122 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
   const hasSelection = Boolean(currentCompany?.name);
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-5">
-      <div className="w-full max-w-5xl">
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
-          <div className="bg-slate-900 text-white px-6 py-5 flex items-center justify-between gap-4">
-            <div>
-              <div className="text-xs font-semibold tracking-widest text-slate-300 uppercase">Tally Prime Gateway</div>
-              <h1 className="text-2xl font-bold mt-1">Select Company</h1>
-              <p className="text-sm text-slate-300 mt-1">Tally ki tarah pehle company select karein. Iske baad sirf usi company ka data open hoga.</p>
-            </div>
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${tallyStatus === 'online' ? 'bg-emerald-500/20 text-emerald-200' : 'bg-white/10 text-slate-300'}`}>
-              {tallyStatus === 'online' ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-              {tallyStatus === 'online' ? 'Tally Online' : 'Tally Offline'}
-            </div>
+    <div className="min-h-screen bg-slate-200 flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-6xl bg-white border border-slate-400 shadow-2xl overflow-hidden">
+        <div className="bg-[#17365d] text-white px-4 py-3 flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-slate-300">Anish Tally Portal</div>
+            <h1 className="text-xl font-bold">Company Selection</h1>
           </div>
+          <div className={`flex items-center gap-2 px-3 py-1.5 border text-xs font-bold ${tallyStatus === 'online' ? 'border-emerald-300 bg-emerald-500/20 text-emerald-100' : 'border-slate-400 bg-white/10 text-slate-200'}`}>
+            {tallyStatus === 'online' ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+            {tallyStatus === 'online' ? 'TALLY ONLINE' : 'TALLY OFFLINE'}
+          </div>
+        </div>
 
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-5 gap-3">
-              <div>
-                <h2 className="font-bold text-slate-900">Company List</h2>
-                <p className="text-xs text-slate-500 mt-1">{companies.length} saved company{companies.length === 1 ? '' : 'ies'}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={startConnector}
-                  disabled={startingConnector}
-                  className="px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
-                >
-                  <Wifi className="w-4 h-4" />
-                  {startingConnector ? 'Starting...' : 'Start Connector'}
-                </button>
-                <button
-                  onClick={refreshFromTally}
-                  disabled={refreshing}
-                  className="px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
-                >
-                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                  {refreshing ? 'Reading Tally...' : 'Refresh from Tally'}
-                </button>
-              </div>
+        <div className="bg-slate-100 border-b border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">
+          Select a Company to continue
+        </div>
+
+        <div className="p-4">
+          {message && (
+            <div className="mb-3 border border-blue-300 bg-blue-50 text-blue-800 px-3 py-2 text-sm">
+              {message}
+            </div>
+          )}
+
+          <div className="border border-slate-400 bg-white">
+            <div className="grid grid-cols-[minmax(0,2fr)_1fr_1fr_130px] bg-slate-200 border-b border-slate-400 text-xs font-bold text-slate-700 uppercase">
+              <div className="px-3 py-2">Company Name</div>
+              <div className="px-3 py-2 border-l border-slate-300">Financial Year</div>
+              <div className="px-3 py-2 border-l border-slate-300">State / GSTIN</div>
+              <div className="px-3 py-2 border-l border-slate-300 text-center">Status</div>
             </div>
 
-            {message && (
-              <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 px-4 py-3 text-sm">
-                {message}
-              </div>
-            )}
-
-            {companies.length === 0 ? (
-              <div className="border-2 border-dashed border-slate-200 rounded-xl p-10 text-center">
-                <Building2 className="w-10 h-10 mx-auto text-slate-300" />
-                <p className="font-semibold text-slate-700 mt-3">Tally company abhi saved nahi hai</p>
-                <p className="text-sm text-slate-500 mt-1">Tally 9000/Office Connector chalu karke Refresh from Tally dabayein.</p>
-              </div>
-            ) : (
-              <div className="grid md:grid-cols-2 gap-4">
-                {companies.map((company) => {
+            <div className="max-h-[430px] overflow-y-auto">
+              {companies.length === 0 ? (
+                <div className="py-16 text-center">
+                  <Building2 className="w-10 h-10 mx-auto text-slate-300" />
+                  <p className="font-semibold text-slate-700 mt-3">No saved company found</p>
+                  <p className="text-sm text-slate-500 mt-1">Tally/Office Connector start karke Refresh from Tally dabayein.</p>
+                </div>
+              ) : (
+                companies.map((company) => {
                   const selected = currentCompany?.id === company.id || (
                     Boolean(currentCompany?.gstin && company.gstin) &&
                     currentCompany.gstin.toLowerCase() === company.gstin.toLowerCase()
                   );
                   return (
                     <button
+                      type="button"
                       key={company.id || company.name}
                       onClick={() => onSelectCompany(company)}
-                      className={`text-left rounded-xl border-2 p-5 transition ${selected ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50'}`}
+                      className={`w-full grid grid-cols-[minmax(0,2fr)_1fr_1fr_130px] text-left border-b border-slate-200 last:border-b-0 transition ${selected ? 'bg-blue-100 ring-inset ring-2 ring-blue-600' : 'hover:bg-slate-50'}`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 min-w-0">
-                          <div className={`p-2 rounded-lg ${selected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                            <Building2 className="w-5 h-5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-bold text-slate-900 truncate">{company.name}</div>
-                            <div className="text-xs font-mono text-slate-500 mt-1">{company.gstin || 'GSTIN not set'}</div>
-                          </div>
+                      <div className="px-3 py-3 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Building2 className={`w-4 h-4 shrink-0 ${selected ? 'text-blue-700' : 'text-slate-500'}`} />
+                          <span className="font-semibold text-slate-900 truncate">{company.name}</span>
                         </div>
-                        {selected && <span className="text-[10px] font-bold uppercase text-blue-700">Selected</span>}
+                        <div className="text-[11px] text-slate-500 ml-6 mt-1 truncate">{company.address || 'Address not available'}</div>
                       </div>
-                      <div className="mt-4 text-xs text-slate-600 space-y-1">
-                        <div>{company.address || 'Address not available'}</div>
-                        <div>{company.state || 'State not available'} {company.stateCode ? `(${company.stateCode})` : ''}</div>
-                        {company.financialYearFrom && <div>Books from: {company.financialYearFrom}</div>}
+                      <div className="px-3 py-3 border-l border-slate-200 text-sm text-slate-700">
+                        {company.financialYearFrom || '—'}
+                      </div>
+                      <div className="px-3 py-3 border-l border-slate-200 text-xs text-slate-700">
+                        <div>{company.state || '—'} {company.stateCode ? `(${company.stateCode})` : ''}</div>
+                        <div className="font-mono text-slate-500 mt-1 truncate">{company.gstin || 'Unregistered'}</div>
+                      </div>
+                      <div className="px-3 py-3 border-l border-slate-200 flex items-center justify-center">
+                        {selected ? (
+                          <span className="px-2 py-1 text-[10px] font-bold uppercase bg-blue-600 text-white">Selected</span>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-slate-400">Available</span>
+                        )}
                       </div>
                     </button>
                   );
-                })}
-              </div>
-            )}
-
-            <div className="mt-6 pt-5 border-t border-slate-200 flex justify-end">
-              <button
-                onClick={onContinue}
-                disabled={!hasSelection}
-                className="px-5 py-3 rounded-lg bg-slate-900 text-white font-semibold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Open Selected Company <ArrowRight className="w-4 h-4" />
-              </button>
+                })
+              )}
             </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={startConnector}
+              disabled={startingConnector}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-60"
+            >
+              <Wifi className="w-4 h-4" />
+              {startingConnector ? 'Starting...' : 'Start Connector'}
+            </button>
+            <button
+              type="button"
+              onClick={refreshFromTally}
+              disabled={refreshing}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-60"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Reading Tally...' : 'Refresh from Tally'}
+            </button>
+            <div className="ml-auto text-xs text-slate-500">
+              {companies.length} saved compan{companies.length === 1 ? 'y' : 'ies'}
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-slate-300 pt-3 flex items-center justify-between">
+            <div className="text-xs text-slate-500">
+              Double-click style selection: click a row, then open the selected company.
+            </div>
+            <button
+              type="button"
+              onClick={onContinue}
+              disabled={!hasSelection}
+              className="px-5 py-2.5 bg-[#17365d] hover:bg-[#102946] text-white font-bold text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Open Selected Company <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
