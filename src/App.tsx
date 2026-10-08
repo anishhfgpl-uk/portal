@@ -216,6 +216,28 @@ const getCompanyKey = (company: SellerInfo | null | undefined): string => {
   return (guid || gstin || name).replace(/[^a-z0-9]+/g, '-');
 };
 
+const dedupeCompanies = (list: SellerInfo[]): SellerInfo[] => {
+  const map = new Map<string, SellerInfo>();
+  for (const company of list) {
+    if (!company?.name || isDemoCompany(company)) continue;
+    const key = getCompanyKey(company);
+    const existing = map.get(key);
+    if (!existing) map.set(key, company);
+    else map.set(key, {
+      ...existing,
+      ...company,
+      id: existing.id || company.id,
+      tallyGuid: company.tallyGuid || existing.tallyGuid,
+      gstin: company.gstin || existing.gstin,
+      address: company.address || existing.address,
+      state: company.state || existing.state,
+      stateCode: company.stateCode || existing.stateCode,
+      financialYearFrom: company.financialYearFrom || existing.financialYearFrom,
+    });
+  }
+  return Array.from(map.values());
+};
+
 const EMPTY_SELLER_INFO: SellerInfo = {
   id: 'no-company-selected',
   name: '',
@@ -555,7 +577,7 @@ export default function App() {
 
   const [companies, setCompanies] = useState<SellerInfo[]>(() => {
     const saved = readStoredJson<SellerInfo[]>('tally_companies', [], isArray);
-    return saved.filter((company) => !isDemoCompany(company));
+    return dedupeCompanies(saved.filter((company) => !isDemoCompany(company)));
   });
 
   const [sellerInfo, setSellerInfo] = useState<SellerInfo>(() => {
@@ -643,11 +665,10 @@ export default function App() {
           const cloudCompanies = Array.isArray(snapshot.companies) ? snapshot.companies.filter((c: SellerInfo) => !isDemoCompany(c)) : [];
           const dataByCompany = snapshot.dataByCompany || {};
           if (cloudCompanies.length) {
-            setCompanies((prev) => {
-              const map = new Map(prev.filter((c) => !isDemoCompany(c)).map((c) => [getCompanyKey(c), c]));
-              cloudCompanies.forEach((c: SellerInfo) => map.set(getCompanyKey(c), c));
-              return Array.from(map.values());
-            });
+            setCompanies((prev) => dedupeCompanies([
+              ...prev.filter((c) => !isDemoCompany(c)),
+              ...cloudCompanies,
+            ]));
           }
           const allParties: Party[] = [], allItems: StockItem[] = [], allInvoices: Invoice[] = [], allVouchers: TallyVoucher[] = [];
           Object.entries(dataByCompany).forEach(([companyKey, data]: [string, any]) => {
@@ -795,11 +816,10 @@ export default function App() {
         if (actualCompanies.length > 0) {
           // Tally is an import/sync source only. Detecting an open Tally company
           // must never switch the portal's cloud-selected company.
-          setCompanies((prev) => {
-            const map = new Map(prev.filter((c) => !isDemoCompany(c)).map((c) => [getCompanyKey(c), c]));
-            actualCompanies.forEach((c) => map.set(getCompanyKey(c), c));
-            return Array.from(map.values());
-          });
+          setCompanies((prev) => dedupeCompanies([
+            ...prev.filter((c) => !isDemoCompany(c)),
+            ...actualCompanies,
+          ]));
           setImportStatus({
             message: '🟢 Tally connected — actual OPEN company imported: ' + activeCompany.name,
             type: 'success',
@@ -986,15 +1006,12 @@ export default function App() {
   };
 
   const handleUpdateCompany = (company: SellerInfo) => {
-    setCompanies((prev) =>
-      prev.map((c) =>
-        c.id === company.id || c.name === company.name ? company : c
-      )
-    );
-    if (
-      sellerInfo.id === company.id ||
-      sellerInfo.name === company.name
-    ) {
+    const companyKey = getCompanyKey(company);
+    setCompanies((prev) => dedupeCompanies([
+      ...prev.filter((c) => getCompanyKey(c) !== companyKey),
+      company,
+    ]));
+    if (getCompanyKey(sellerInfo) === companyKey || sellerInfo.id === company.id) {
       setSellerInfo(company);
     }
   };
@@ -1010,12 +1027,10 @@ export default function App() {
   };
 
   const handleUpsertCompanyFromSelection = (company: SellerInfo) => {
-    const existing = companies.find(
-      (c) => c.name.trim().toLowerCase() === company.name.trim().toLowerCase() ||
-        Boolean(company.gstin && c.gstin && c.gstin.toLowerCase() === company.gstin.toLowerCase())
-    );
+    const companyKey = getCompanyKey(company);
+    const existing = companies.find((c) => getCompanyKey(c) === companyKey);
     if (existing) {
-      handleUpdateCompany({ ...company, id: existing.id });
+      handleUpdateCompany({ ...existing, ...company, id: existing.id });
     } else {
       handleAddCompany(company);
     }
