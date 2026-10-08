@@ -1050,13 +1050,14 @@ export default function App() {
   };
 
   const handleUpsertCompanyFromSelection = (company: SellerInfo) => {
-    const companyKey = getCompanyKey(company);
-    const existing = companies.find((c) => getCompanyKey(c) === companyKey);
-    if (existing) {
-      handleUpdateCompany({ ...existing, ...company, id: existing.id });
-    } else {
-      handleAddCompany(company);
-    }
+    setCompanies((prev) => {
+      const existingIndex = prev.findIndex((c) => companiesAreSame(c, company));
+      if (existingIndex < 0) return dedupeCompanies([company, ...prev]);
+
+      const next = [...prev];
+      next[existingIndex] = mergeCompanyRecord(next[existingIndex], company);
+      return dedupeCompanies(next);
+    });
   };
 
   // Party handlers
