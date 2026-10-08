@@ -217,7 +217,7 @@ const getCompanyKey = (company: SellerInfo | null | undefined): string => {
 };
 
 const normalizeCompanyName = (value: unknown): string =>
-  String(value || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+  String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 const normalizeCompanyGstin = (value: unknown): string =>
   String(value || '').trim().toLowerCase();
