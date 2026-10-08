@@ -2259,13 +2259,13 @@ export async function fetchSalesVouchersFromTally(
     throw new Error('Unable to determine the Tally import date range.');
   }
 
-  // Keep each Tally request deliberately small. Sales-group filtering is used
-  // so every Sales voucher is included regardless of its voucher type name.
-  // Two-day windows prevent Tally from hanging on busy months.
+  // Tally can hang when a busy date range is fetched with inventory + ledger
+  // details in one request. Keep the user's exact From/To dates, but issue ONE
+  // calendar day per request. Sales-group filtering still includes every Sales
+  // voucher regardless of voucher type/name, and there is no hard-coded date.
   const ranges: Array<[Date, Date]> = [];
   for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime(); ) {
     const end = new Date(cursor.getTime());
-    end.setDate(end.getDate() + 1);
     if (end.getTime() > rangeTo.getTime()) {
       end.setTime(rangeTo.getTime());
     }
