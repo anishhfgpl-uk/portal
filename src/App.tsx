@@ -656,10 +656,21 @@ export default function App() {
             (Array.isArray(data?.invoices) ? data.invoices : []).forEach((inv: Invoice) => allInvoices.push({ ...inv, companyKey: inv.companyKey || companyKey }));
             (Array.isArray(data?.tallyVouchers) ? data.tallyVouchers : []).forEach((v: TallyVoucher) => allVouchers.push({ ...v, companyKey: v.companyKey || companyKey }));
           });
-          if (allParties.length) setParties(allParties);
-          if (allItems.length) setStockItems(allItems);
-          if (allInvoices.length) setInvoices(allInvoices);
-          if (allVouchers.length) setTallyVouchers(allVouchers);
+          // Cloud is authoritative. Even an empty cloud collection must replace
+          // device-local cached/sample data; localStorage is cache only.
+          setParties(allParties);
+          setStockItems(allItems);
+          setInvoices(allInvoices);
+          setTallyVouchers(allVouchers);
+          // Keep the same cloud-selected company on every device. Never let the
+          // locally open Tally company silently replace the cloud selection.
+          if (cloudCompanies.length) {
+            setSellerInfo((current) => {
+              const currentKey = getCompanyKey(current);
+              return cloudCompanies.find((c: SellerInfo) => getCompanyKey(c) === currentKey)
+                || cloudCompanies[0];
+            });
+          }
         }
         setCloudStatus('ready');
         setCloudReady(true);
@@ -782,24 +793,13 @@ export default function App() {
         const importedCompanies = await fetchCompaniesFromTally(tallyConfig);
         const actualCompanies = importedCompanies.filter((company) => !isDemoCompany(company));
         if (actualCompanies.length > 0) {
-          const activeCompany = actualCompanies[0];
+          // Tally is an import/sync source only. Detecting an open Tally company
+          // must never switch the portal's cloud-selected company.
           setCompanies((prev) => {
             const map = new Map(prev.filter((c) => !isDemoCompany(c)).map((c) => [getCompanyKey(c), c]));
             actualCompanies.forEach((c) => map.set(getCompanyKey(c), c));
             return Array.from(map.values());
           });
-          setSellerInfo(activeCompany);
-          setTallyConfig((prev) => ({
-            ...prev,
-            companyName: activeCompany.name,
-            financialYear: activeCompany.financialYearFrom
-              ? (() => {
-                  const from = activeCompany.financialYearFrom.replace(/[-/]/g, '');
-                  const year = from.length >= 4 ? Number(from.slice(0, 4)) : NaN;
-                  return Number.isFinite(year) ? year + '-' + (year + 1) : (prev.financialYear || '2025-2026');
-                })()
-              : (prev.financialYear || '2025-2026'),
-          }));
           setImportStatus({
             message: '🟢 Tally connected — actual OPEN company imported: ' + activeCompany.name,
             type: 'success',
