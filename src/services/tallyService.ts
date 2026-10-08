@@ -2225,41 +2225,27 @@ export async function fetchSalesVouchersFromTally(
   toDate?: string
 ): Promise<ParsedVouchersResult> {
   const parseIsoDate = (value?: string) => {
-    const m = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+    const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
     return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
-  };
-  const formatTallyDate = (date: Date) => {
-    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return \`${date.getDate()}-${names[date.getMonth()]}-${date.getFullYear()}\`;
   };
   const from = parseIsoDate(fromDate);
   const to = parseIsoDate(toDate);
+  const pad = (n: number) => String(n).padStart(2, '0');
 
-  // HSFGPL's proven importer reads small sequential windows. This avoids the
-  // TallyPrime freeze caused by large month/year exports while still importing
-  // every Sales-group voucher, independent of voucher name.
+  // Proven HSFGPL strategy: sequential 7-day exports. The Tally formula
+  // $$IsSales:$VoucherTypeName selects every voucher type under Sales,
+  // regardless of the voucher's actual name.
   const ranges: Array<[Date, Date]> = [];
-  if (from && to && from <= to) {
-    for (let cursor = new Date(from); cursor <= to; ) {
-      const end = new Date(cursor);
-      end.setDate(end.getDate() + 6); // 7-day window
-      if (end > to) end.setTime(to.getTime());
-      ranges.push([new Date(cursor), new Date(end)]);
-      cursor = new Date(end);
-      cursor.setDate(cursor.getDate() + 1);
-    }
-  } else {
-    const fy = getCurrentFinancialYearRange();
-    const fyFrom = parseIsoDate(fy.start)!;
-    const fyTo = parseIsoDate(fy.end)!;
-    for (let cursor = new Date(fyFrom); cursor <= fyTo; ) {
-      const end = new Date(cursor);
-      end.setDate(end.getDate() + 6);
-      if (end > fyTo) end.setTime(fyTo.getTime());
-      ranges.push([new Date(cursor), new Date(end)]);
-      cursor = new Date(end);
-      cursor.setDate(cursor.getDate() + 1);
-    }
+  const rangeFrom = from && to && from <= to ? from : parseIsoDate(getCurrentFinancialYearRange().start)!;
+  const rangeTo = from && to && from <= to ? to : parseIsoDate(getCurrentFinancialYearRange().end)!;
+
+  for (let cursor = new Date(rangeFrom); cursor <= rangeTo; ) {
+    const end = new Date(cursor);
+    end.setDate(end.getDate() + 6);
+    if (end > rangeTo) end.setTime(rangeTo.getTime());
+    ranges.push([new Date(cursor), new Date(end)]);
+    cursor = new Date(end);
+    cursor.setDate(cursor.getDate() + 1);
   }
 
   const invoiceMap = new Map<string, Invoice>();
@@ -2267,29 +2253,34 @@ export async function fetchSalesVouchersFromTally(
   const items = new Map<string, StockItem>();
   let lastError: Error | null = null;
 
-  for (const [rangeFrom, rangeTo] of ranges) {
-    const fromText = formatTallyDate(rangeFrom);
-    const toText = formatTallyDate(rangeTo);
+  for (const [rangeStart, rangeEnd] of ranges) {
+    const start = String(rangeStart.getFullYear()) + pad(rangeStart.getMonth() + 1) + pad(rangeStart.getDate());
+    const end = String(rangeEnd.getFullYear()) + pad(rangeEnd.getMonth() + 1) + pad(rangeEnd.getDate());
     const xmlQuery = TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE.replace(
       '<STATICVARIABLES>',
-      `<STATICVARIABLES><SVFROMDATE TYPE="Date">${rangeFrom.getFullYear()}\${String(rangeFrom.getMonth()+1).padStart(2,'0')}\${String(rangeFrom.getDate()).padStart(2,'0')}</SVFROMDATE><SVTODATE TYPE="Date">${rangeTo.getFullYear()}\${String(rangeTo.getMonth()+1).padStart(2,'0')}\${String(rangeTo.getDate()).padStart(2,'0')}</SVTODATE>`
+      '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + start + '</SVFROMDATE><SVTODATE TYPE="Date">' + end + '</SVTODATE>'
     );
 
     try {
       const res = await sendTallyRequest(xmlQuery, config);
       if (!res?.text?.trim()) continue;
       const parsed = parseSalesVouchersXML(res.text, sellerInfo);
+
       for (const invoice of parsed.invoices) {
         if (fromDate && toDate) {
           if (invoice.invoiceDate < fromDate || invoice.invoiceDate > toDate) continue;
         } else if (!isDateInCurrentFinancialYear(invoice.invoiceDate)) {
           continue;
         }
-        const key = \`String(invoice.invoiceDate).slice(0,10)|String(invoice.invoiceNo).trim().toLowerCase()|String(invoice.tallyGuid || invoice.tallyMasterId || "").trim().toLowerCase()\`;
+        const key =
+          String(invoice.invoiceDate).slice(0, 10) + '|' +
+          String(invoice.invoiceNo).trim().toLowerCase() + '|' +
+          String(invoice.tallyGuid || invoice.tallyMasterId || '').trim().toLowerCase();
         invoiceMap.set(key, invoice);
       }
+
       for (const p of parsed.extractedParties) parties.set(p.name.trim().toLowerCase(), p);
-      for (const i of parsed.extractedItems) items.set(i.name.trim().toLowerCase(), i);
+      for (const item of parsed.extractedItems) items.set(item.name.trim().toLowerCase(), item);
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err?.message || err));
     }
@@ -2297,11 +2288,12 @@ export async function fetchSalesVouchersFromTally(
 
   if (invoiceMap.size > 0) {
     return {
-      invoices: Array.from(invoiceMap.values()).sort((a,b) => a.invoiceDate.localeCompare(b.invoiceDate)),
+      invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
       extractedParties: Array.from(parties.values()),
       extractedItems: Array.from(items.values()),
     };
   }
+
   if (lastError) throw lastError;
   return { invoices: [], extractedParties: [], extractedItems: [] };
 }
