@@ -45,7 +45,6 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
         const imported = await fetchCompaniesFromTally(tallyConfig);
         if (imported.length > 0) {
           imported.forEach(onUpsertCompany);
-          onSelectCompany(imported[0]);
           setMessage('✅ Connector Connected — Portal ↔ Tally link active.');
         } else {
           setMessage('⚠️ Connector start command bhej diya gaya. Tally company list abhi nahi mili; Refresh from Tally ek baar dabayein.');
@@ -65,8 +64,7 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
       const imported = await fetchCompaniesFromTally(tallyConfig);
       if (!imported.length) throw new Error('Tally se company list nahi mili.');
       imported.forEach(onUpsertCompany);
-      onSelectCompany(imported[0]);
-      setMessage(`Tally company loaded: ${imported[0].name}`);
+      setMessage(`Tally company list refreshed: ${imported.length} company(ies) found. Select the required row, then open it.`);
       return imported;
     } catch (error: any) {
       setMessage(`❌ ${error?.message || 'Tally company read nahi ho payi.'}`);
@@ -120,10 +118,9 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
                 </div>
               ) : (
                 companies.map((company) => {
-                  const selected = currentCompany?.id === company.id || (
-                    Boolean(currentCompany?.gstin && company.gstin) &&
-                    currentCompany.gstin.toLowerCase() === company.gstin.toLowerCase()
-                  );
+                  const currentKey = String(currentCompany?.tallyGuid || currentCompany?.gstin || currentCompany?.name || '').trim().toLowerCase();
+                  const companyKey = String(company?.tallyGuid || company?.gstin || company?.name || '').trim().toLowerCase();
+                  const selected = Boolean(currentKey) && currentKey === companyKey;
                   return (
                     <button
                       type="button"
