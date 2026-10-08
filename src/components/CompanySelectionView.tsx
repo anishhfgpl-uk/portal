@@ -75,7 +75,7 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
   };
 
   const normalizeCompanyName = (value: unknown): string =>
-    String(value || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+    String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
   const companiesAreSame = (a: SellerInfo, b: SellerInfo): boolean => {
     const aGuid = String(a?.tallyGuid || '').trim().toLowerCase();
