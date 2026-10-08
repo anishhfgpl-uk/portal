@@ -216,26 +216,49 @@ const getCompanyKey = (company: SellerInfo | null | undefined): string => {
   return (guid || gstin || name).replace(/[^a-z0-9]+/g, '-');
 };
 
+const normalizeCompanyName = (value: unknown): string =>
+  String(value || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+
+const normalizeCompanyGstin = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const normalizeCompanyGuid = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const companiesAreSame = (a: SellerInfo, b: SellerInfo): boolean => {
+  const aName = normalizeCompanyName(a.name);
+  const bName = normalizeCompanyName(b.name);
+  const aGstin = normalizeCompanyGstin(a.gstin);
+  const bGstin = normalizeCompanyGstin(b.gstin);
+  const aGuid = normalizeCompanyGuid(a.tallyGuid);
+  const bGuid = normalizeCompanyGuid(b.tallyGuid);
+
+  if (aGuid && bGuid && aGuid === bGuid) return true;
+  if (aGstin && bGstin && aGstin === bGstin) return true;
+  return Boolean(aName && bName && aName === bName);
+};
+
+const mergeCompanyRecord = (existing: SellerInfo, incoming: SellerInfo): SellerInfo => ({
+  ...existing,
+  ...incoming,
+  id: existing.id || incoming.id,
+  tallyGuid: incoming.tallyGuid || existing.tallyGuid,
+  gstin: incoming.gstin || existing.gstin,
+  address: incoming.address || existing.address,
+  state: incoming.state || existing.state,
+  stateCode: incoming.stateCode || existing.stateCode,
+  financialYearFrom: incoming.financialYearFrom || existing.financialYearFrom,
+});
+
 const dedupeCompanies = (list: SellerInfo[]): SellerInfo[] => {
-  const map = new Map<string, SellerInfo>();
+  const result: SellerInfo[] = [];
   for (const company of list) {
     if (!company?.name || isDemoCompany(company)) continue;
-    const key = getCompanyKey(company);
-    const existing = map.get(key);
-    if (!existing) map.set(key, company);
-    else map.set(key, {
-      ...existing,
-      ...company,
-      id: existing.id || company.id,
-      tallyGuid: company.tallyGuid || existing.tallyGuid,
-      gstin: company.gstin || existing.gstin,
-      address: company.address || existing.address,
-      state: company.state || existing.state,
-      stateCode: company.stateCode || existing.stateCode,
-      financialYearFrom: company.financialYearFrom || existing.financialYearFrom,
-    });
+    const index = result.findIndex((existing) => companiesAreSame(existing, company));
+    if (index < 0) result.push(company);
+    else result[index] = mergeCompanyRecord(result[index], company);
   }
-  return Array.from(map.values());
+  return result;
 };
 
 const EMPTY_SELLER_INFO: SellerInfo = {
