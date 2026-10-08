@@ -342,6 +342,7 @@ export const TALLY_XML_QUERIES = {
 
   // All accounting vouchers (Receipt, Credit Note and party-ledger import)
   // Fetch all voucher types and filter them in the portal UI for compatibility across Tally Prime builds.
+  ACCOUNTING_VOUCHERS_BOUNDED: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>AccountingVouchersBounded</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE="Formulae" NAME="AccountingVoucherInRange">$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><COLLECTION NAME="AccountingVouchersBounded" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No"><TYPE>Voucher</TYPE><FILTER>AccountingVoucherInRange</FILTER><FETCH>DATE,VCHTYPE,VOUCHERTYPENAME,VOUCHERNUMBER,REFERENCE,PARTYLEDGERNAME,PARTYNAME,NARRATION,GUID,MASTERID,LEDGERENTRIES.LIST</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
   ACCOUNTING_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
@@ -2699,10 +2700,28 @@ export async function performTwoWaySync({
 
 
 export async function fetchAccountingVouchersFromTally(
-  config: TallyConfig = DEFAULT_TALLY_CONFIG
+  config: TallyConfig = DEFAULT_TALLY_CONFIG,
+  fromDate?: string,
+  toDate?: string
 ): Promise<TallyVoucher[]> {
-  const result = await sendTallyRequest(TALLY_XML_QUERIES.ACCOUNTING_VOUCHERS_COLLECTION, config);
-  return parseAccountingVouchersXML(result.text);
+  const cleanDate = (value?: string) => {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return match ? `${match[1]}${match[2]}${match[3]}` : '';
+  };
+  const from = cleanDate(fromDate);
+  const to = cleanDate(toDate);
+  if (!from || !to) {
+    throw new Error('Receipt/Payment/Credit Note import ke liye From Date aur To Date zaroori hai.');
+  }
+  const xml = TALLY_XML_QUERIES.ACCOUNTING_VOUCHERS_BOUNDED.replace(
+    '<STATICVARIABLES>',
+    `<STATICVARIABLES><SVFROMDATE TYPE="Date">${from}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE>`
+  );
+  const result = await sendTallyRequest(xml, config);
+  return parseAccountingVouchersXML(result.text).filter(v => {
+    const type = v.voucherType.trim().toLowerCase();
+    return type === 'receipt' || type === 'payment' || type === 'credit note' || type === 'creditnote';
+  });
 }
 
 export function parseAccountingVouchersXML(xmlInput: string | Document): TallyVoucher[] {
