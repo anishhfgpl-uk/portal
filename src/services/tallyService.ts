@@ -2224,27 +2224,53 @@ export async function fetchSalesVouchersFromTally(
   fromDate?: string,
   toDate?: string
 ): Promise<ParsedVouchersResult> {
-  const parseIsoDate = (value?: string) => {
-    const m = String(value || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
-    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  const parseIsoDate = (value?: string): Date | null => {
+    const m = String(value || '').trim().match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+    if (!m) return null;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const parsed = new Date(year, month - 1, day);
+    if (
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() !== month - 1 ||
+      parsed.getDate() !== day
+    ) return null;
+    return parsed;
   };
-  const from = parseIsoDate(fromDate);
-  const to = parseIsoDate(toDate);
   const pad = (n: number) => String(n).padStart(2, '0');
+
+  // Never hard-code an import date. When From/To are supplied by the user,
+  // those exact dates define the import window. Only the FY fallback is used
+  // when no dates are supplied.
+  const selectedFrom = parseIsoDate(fromDate);
+  const selectedTo = parseIsoDate(toDate);
+  if ((fromDate || toDate) && (!selectedFrom || !selectedTo)) {
+    throw new Error('Invalid From Date/To Date. Please select valid dates.');
+  }
+  if (selectedFrom && selectedTo && selectedFrom.getTime() > selectedTo.getTime()) {
+    throw new Error('From Date cannot be after To Date.');
+  }
+
+  const fy = getCurrentFinancialYearRange();
+  const rangeFrom = selectedFrom || parseIsoDate(fy.start);
+  const rangeTo = selectedTo || parseIsoDate(fy.end);
+  if (!rangeFrom || !rangeTo) {
+    throw new Error('Unable to determine the Tally import date range.');
+  }
 
   // Keep each Tally request deliberately small. Sales-group filtering is used
   // so every Sales voucher is included regardless of its voucher type name.
   // Two-day windows prevent Tally from hanging on busy months.
   const ranges: Array<[Date, Date]> = [];
-  const rangeFrom = from && to && from <= to ? from : parseIsoDate(getCurrentFinancialYearRange().start)!;
-  const rangeTo = from && to && from <= to ? to : parseIsoDate(getCurrentFinancialYearRange().end)!;
-
-  for (let cursor = new Date(rangeFrom); cursor <= rangeTo; ) {
-    const end = new Date(cursor);
+  for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime(); ) {
+    const end = new Date(cursor.getTime());
     end.setDate(end.getDate() + 1);
-    if (end > rangeTo) end.setTime(rangeTo.getTime());
-    ranges.push([new Date(cursor), new Date(end)]);
-    cursor = new Date(end);
+    if (end.getTime() > rangeTo.getTime()) {
+      end.setTime(rangeTo.getTime());
+    }
+    ranges.push([new Date(cursor.getTime()), new Date(end.getTime())]);
+    cursor = new Date(end.getTime());
     cursor.setDate(cursor.getDate() + 1);
   }
 
