@@ -252,7 +252,7 @@ export const TALLY_XML_QUERIES = {
 
   // Bounded native Sales voucher collection. It honors the requested period
   // and returns voucher, inventory and ledger entries without an unbounded scan.
-  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>SalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE="Formulae" NAME="SalesVoucherInRange">$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><COLLECTION NAME="SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No"><TYPE>Vouchers</TYPE><CHILDOF>Sales</CHILDOF><FILTER>SalesVoucherInRange</FILTER><NATIVEMETHOD>VoucherNumber</NATIVEMETHOD><NATIVEMETHOD>VoucherTypeName</NATIVEMETHOD><NATIVEMETHOD>Date</NATIVEMETHOD><NATIVEMETHOD>Reference</NATIVEMETHOD><NATIVEMETHOD>PartyLedgerName</NATIVEMETHOD><NATIVEMETHOD>PartyName</NATIVEMETHOD><NATIVEMETHOD>PartyGSTIN</NATIVEMETHOD><NATIVEMETHOD>StateName</NATIVEMETHOD><NATIVEMETHOD>PlaceOfSupply</NATIVEMETHOD><NATIVEMETHOD>BasicBuyerAddress</NATIVEMETHOD><NATIVEMETHOD>Narration</NATIVEMETHOD><NATIVEMETHOD>GUID</NATIVEMETHOD><NATIVEMETHOD>MASTERID</NATIVEMETHOD><NATIVEMETHOD>AllInventoryEntries</NATIVEMETHOD><NATIVEMETHOD>AllLedgerEntries</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>` ,
+  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>SalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE="Formulae" NAME="SalesVoucherInRange">$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><COLLECTION NAME="SalesVouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No"><FILTER>SalesVoucherInRange</FILTER><TYPE>Vouchers</TYPE><CHILDOF>Sales</CHILDOF><NATIVEMETHOD>VoucherNumber</NATIVEMETHOD><NATIVEMETHOD>VoucherTypeName</NATIVEMETHOD><NATIVEMETHOD>Date</NATIVEMETHOD><NATIVEMETHOD>Reference</NATIVEMETHOD><NATIVEMETHOD>PartyLedgerName</NATIVEMETHOD><NATIVEMETHOD>PartyName</NATIVEMETHOD><NATIVEMETHOD>PartyGSTIN</NATIVEMETHOD><NATIVEMETHOD>StateName</NATIVEMETHOD><NATIVEMETHOD>PlaceOfSupply</NATIVEMETHOD><NATIVEMETHOD>BasicBuyerAddress</NATIVEMETHOD><NATIVEMETHOD>Narration</NATIVEMETHOD><NATIVEMETHOD>GUID</NATIVEMETHOD><NATIVEMETHOD>MASTERID</NATIVEMETHOD><NATIVEMETHOD>AllInventoryEntries</NATIVEMETHOD><NATIVEMETHOD>AllLedgerEntries</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>` ,
   // Sales Vouchers (Invoices) Collection Query for Tally Prime
   SALES_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
@@ -2590,3 +2590,153 @@ export async function performTwoWaySync({
     extractedParties: [],
     extractedItems: [],
   };
+
+  try {
+    tallyResult = await fetchSalesVouchersFromTally(tallyConfig, sellerInfo);
+  } catch (err: any) {
+    report.errors.push(`Tally Fetch Warning: ${err.message}`);
+  }
+
+  report.totalInTally = tallyResult.invoices.length;
+  report.discoveredParties = tallyResult.extractedParties.length;
+  report.discoveredItems = tallyResult.extractedItems.length;
+
+  // Build lookup index of existing portal invoices by normalized invoice number and GUID
+  const portalMap = new Map<string, Invoice>();
+  const guidMap = new Map<string, Invoice>();
+
+  portalInvoices.forEach((inv) => {
+    const normNo = inv.invoiceNo.trim().toLowerCase();
+    if (normNo) portalMap.set(normNo, inv);
+    if (inv.tallyGuid) guidMap.set(inv.tallyGuid.trim().toLowerCase(), inv);
+  });
+
+  const mergedInvoices: Invoice[] = [...portalInvoices];
+  const newImportedFromTally: Invoice[] = [];
+
+  // Step 2: Process Tally Invoices into Portal (Import & De-duplication)
+  tallyResult.invoices.forEach((tallyInv) => {
+    const normNo = tallyInv.invoiceNo.trim().toLowerCase();
+    const tallyGuid = tallyInv.tallyGuid ? tallyInv.tallyGuid.trim().toLowerCase() : '';
+
+    const existingMatch = (normNo && portalMap.get(normNo)) || (tallyGuid && guidMap.get(tallyGuid));
+
+    if (existingMatch) {
+      // DUPLICATE PREVENTED: Already exists in portal! Update sync status to 'synced'
+      report.duplicatesPreventedCount++;
+      report.skippedInvoices.push({
+        invoiceNo: tallyInv.invoiceNo,
+        reason: `Matched existing portal invoice ${existingMatch.invoiceNo} (Duplicate prevented)`,
+      });
+
+      // Update existing invoice sync status if needed
+      const idx = mergedInvoices.findIndex((i) => i.id === existingMatch.id);
+      if (idx !== -1) {
+        mergedInvoices[idx] = {
+          ...mergedInvoices[idx],
+          tallySyncStatus: 'synced',
+          tallySyncDate: mergedInvoices[idx].tallySyncDate || new Date().toISOString(),
+          tallyGuid: mergedInvoices[idx].tallyGuid || tallyInv.tallyGuid,
+          tallyMasterId: mergedInvoices[idx].tallyMasterId || tallyInv.tallyMasterId,
+          isDuplicateProtected: true,
+        };
+        report.updatedCount++;
+      }
+    } else {
+      // NEW INVOICE FROM TALLY: Add to portal
+      newImportedFromTally.push(tallyInv);
+      mergedInvoices.unshift(tallyInv);
+      report.importedCount++;
+      report.importedInvoices.push(tallyInv);
+      // Register in map so subsequent items don't duplicate
+      if (normNo) portalMap.set(normNo, tallyInv);
+    }
+  });
+
+  // Step 3: Export portal-created pending invoices to Tally automatically.
+  // Tally-imported invoices are already marked synced, so only genuine portal pending
+  // invoices are pushed. Each successful export is marked synced to prevent duplicates.
+  const pendingPortalInvoices = mergedInvoices.filter((inv) =>
+    inv.tallySyncStatus !== 'synced' &&
+    (inv.source === 'portal' || !inv.source)
+  );
+
+  for (const inv of pendingPortalInvoices) {
+    try {
+      const exportResult = await exportInvoiceToTally(inv, tallyConfig, sellerInfo.name);
+      if (exportResult.success) {
+        const idx = mergedInvoices.findIndex((i) => i.id === inv.id);
+        if (idx !== -1) {
+          mergedInvoices[idx] = {
+            ...mergedInvoices[idx],
+            tallySyncStatus: 'synced',
+            tallySyncDate: new Date().toISOString(),
+            tallyVoucherType: 'Portal',
+            source: 'portal',
+            isDuplicateProtected: true,
+          };
+          report.exportedCount++;
+          report.exportedInvoices.push(mergedInvoices[idx]);
+        }
+      } else {
+        report.errors.push(`Portal export ${inv.invoiceNo}: ${exportResult.message}`);
+      }
+    } catch (err: any) {
+      report.errors.push(`Portal export ${inv.invoiceNo}: ${err?.message || 'Unknown Tally error'}`);
+    }
+  }
+
+  report.totalInPortal = mergedInvoices.length;
+
+  return {
+    updatedInvoices: mergedInvoices,
+    newParties: tallyResult.extractedParties,
+    newItems: tallyResult.extractedItems,
+    report,
+  };
+}
+
+
+
+export async function fetchAccountingVouchersFromTally(
+  config: TallyConfig = DEFAULT_TALLY_CONFIG
+): Promise<TallyVoucher[]> {
+  const result = await sendTallyRequest(TALLY_XML_QUERIES.ACCOUNTING_VOUCHERS_COLLECTION, config);
+  return parseAccountingVouchersXML(result.text);
+}
+
+export function parseAccountingVouchersXML(xmlInput: string | Document): TallyVoucher[] {
+  const doc = typeof xmlInput === 'string' ? parseTallyXML(xmlInput) : xmlInput;
+  const voucherElements = Array.from(doc.getElementsByTagName('VOUCHER'));
+  return voucherElements.map((vch, index) => {
+    const voucherType = getAttributeOrNode(vch, 'VCHTYPE', 'VOUCHERTYPENAME') || 'Unknown';
+    const number = getNodeValue(vch, 'VOUCHERNUMBER') || getNodeValue(vch, 'REFERENCE') || ('TALLY-' + (index + 1));
+    const date = formatTallyDateToIso(getNodeValue(vch, 'DATE'));
+    const partyName = getNodeValue(vch, 'PARTYLEDGERNAME') || getNodeValue(vch, 'PARTYNAME') || getNodeValue(vch, 'LEDGERNAME') || '';
+    const reference = getNodeValue(vch, 'REFERENCE');
+    const narration = getNodeValue(vch, 'NARRATION');
+    const guid = getNodeValue(vch, 'GUID');
+    const masterId = getNodeValue(vch, 'MASTERID');
+    const ledgerNodes = Array.from(vch.getElementsByTagName('LEDGERENTRIES.LIST'));
+    let partyEffect = 0;
+    let partyLedger = partyName;
+    for (const node of ledgerNodes) {
+      const name = getNodeValue(node, 'LEDGERNAME');
+      const amount = parseFloat(getNodeValue(node, 'AMOUNT') || '0') || 0;
+      const isParty = getNodeValue(node, 'ISPARTYLEDGER').toLowerCase() === 'yes';
+      if (isParty || (partyName && name.toLowerCase() === partyName.toLowerCase())) {
+        partyEffect += amount;
+        if (name) partyLedger = name;
+      }
+    }
+    if (!partyEffect) {
+      partyEffect = parseFloat(getNodeValue(vch, 'AMOUNT') || '0') || 0;
+    }
+    return {
+      id: 'tally-voucher-' + (guid || masterId || number) + '-' + index,
+      date, voucherType, voucherNumber: number, reference,
+      partyName: partyLedger, amount: Math.abs(partyEffect), partyEffect,
+      narration, tallyGuid: guid, tallyMasterId: masterId, source: 'tally_import'
+    };
+  });
+}
