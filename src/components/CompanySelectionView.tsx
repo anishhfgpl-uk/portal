@@ -74,6 +74,21 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
     }
   };
 
+  const normalizeCompanyName = (value: unknown): string =>
+    String(value || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+
+  const companiesAreSame = (a: SellerInfo, b: SellerInfo): boolean => {
+    const aGuid = String(a?.tallyGuid || '').trim().toLowerCase();
+    const bGuid = String(b?.tallyGuid || '').trim().toLowerCase();
+    const aGstin = String(a?.gstin || '').trim().toLowerCase();
+    const bGstin = String(b?.gstin || '').trim().toLowerCase();
+    const aName = normalizeCompanyName(a?.name);
+    const bName = normalizeCompanyName(b?.name);
+    if (aGuid && bGuid && aGuid === bGuid) return true;
+    if (aGstin && bGstin && aGstin === bGstin) return true;
+    return Boolean(aName && bName && aName === bName);
+  };
+
   const hasSelection = Boolean(currentCompany?.name);
 
   return (
@@ -118,9 +133,7 @@ export const CompanySelectionView: React.FC<CompanySelectionViewProps> = ({
                 </div>
               ) : (
                 companies.map((company) => {
-                  const currentKey = String(currentCompany?.tallyGuid || currentCompany?.gstin || currentCompany?.name || '').trim().toLowerCase();
-                  const companyKey = String(company?.tallyGuid || company?.gstin || company?.name || '').trim().toLowerCase();
-                  const selected = Boolean(currentKey) && currentKey === companyKey;
+                  const selected = Boolean(currentCompany?.name) && companiesAreSame(currentCompany, company);
                   return (
                     <button
                       type="button"
