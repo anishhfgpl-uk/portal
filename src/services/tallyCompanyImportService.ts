@@ -28,63 +28,54 @@ function parseDocument(xml: string): Document | null {
 function parseCompanyXml(xml: string): SellerInfo[] {
   const raw = String(xml || '');
   const doc = parseDocument(raw);
-  // Tally can return a response containing valid company NAME attributes even
-  // when the surrounding XML is malformed or wrapped differently by the bridge.
-  // Recover those names independently so discovery does not depend on DOM parsing.
-  const rawNames: string[] = [];
-  const nameRegex = /<(?:COMPANY|CURRENTCOMPANY|CURRENT_COMPANY)\\b[^>]*\\bNAME\\s*=\\s*["']([^"']+)["'][^>]*>/gi;
-  let rawMatch: RegExpExecArray | null;
-  while ((rawMatch = nameRegex.exec(raw))) {
-    const name = clean(rawMatch[1]);
-    if (name && !rawNames.some(existing => existing.toLowerCase() === name.toLowerCase())) rawNames.push(name);
-  }
-
-  if (!doc) {
-    return rawNames.map((name, index) => ({
-      id: `comp-tally-${index + 1}-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
-      name,
-      mailingName: name,
-      address: '', state: '', stateCode: '', country: 'India', pincode: '', phone: '', mobile: '',
-      email: '', website: '', gstin: '', pan: '', financialYearFrom: '', booksBeginningFrom: '',
-      currencySymbol: '₹', currencyFormalName: 'INR', tallyGuid: '', bankName: '', bankAccountNo: '', bankIfsc: '',
-    }));
-  }
-
   const candidates: Element[] = [];
-  const addCandidate = (el: Element | null | undefined) => {
-    if (!el || candidates.includes(el)) return;
-    candidates.push(el);
-  };
-
-  Array.from(doc.getElementsByTagName('COMPANY')).forEach(addCandidate);
-  Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(addCandidate);
-  Array.from(doc.getElementsByTagName('CURRENT_COMPANY')).forEach(addCandidate);
-  Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => addCandidate(x.getElementsByTagName('COMPANY')[0]));
-
-  if (candidates.length === 0) {
-    const root = doc.documentElement;
-    const rootName = value(root, 'SERVERCOMPANYNAME', 'CURRENTCOMPANY', 'CURRENT_COMPANY', 'COMPANYNAME', 'NAME');
-    if (rootName) addCandidate(root);
-  }
-
-  if (candidates.length === 0) {
-    Array.from(doc.getElementsByTagName('*')).forEach(el => {
-      const attrName = clean(el.getAttribute('NAME') || '');
-      if (attrName && /company/i.test(el.tagName)) addCandidate(el);
-    });
-  }
-
-  // TallyPrime may expose company names only as NAME attributes in the\n  // List of Companies response. Recover those names from the raw XML too.\n  if (candidates.length === 0) {\n    const raw = String(xml || '');\n    const re = /<COMPANY\\b[^>]*\\bNAME\\s*=\\s*["']([^"']+)["'][^>]*>/gi;\n    let match: RegExpExecArray | null;\n    while ((match = re.exec(raw))) {\n      const name = clean(match[1]);\n      if (!name) continue;\n      const stub = doc.createElement('COMPANY');\n      stub.setAttribute('NAME', name);\n      addCandidate(stub);\n    }\n  }\n\n  const out: SellerInfo[] = [];
   const seen = new Set<string>();
 
+  const add = (el: Element | null | undefined) => {
+    if (el && !candidates.includes(el)) candidates.push(el);
+  };
+
+  if (doc) {
+    Array.from(doc.getElementsByTagName('COMPANY')).forEach(add);
+    Array.from(doc.getElementsByTagName('CURRENTCOMPANY')).forEach(add);
+    Array.from(doc.getElementsByTagName('CURRENT_COMPANY')).forEach(add);
+    Array.from(doc.getElementsByTagName('TALLYMESSAGE')).forEach(x => add(x.getElementsByTagName('COMPANY')[0]));
+
+    if (candidates.length === 0) {
+      const root = doc.documentElement;
+      const rootName = value(root, 'SERVERCOMPANYNAME', 'CURRENTCOMPANY', 'CURRENT_COMPANY', 'COMPANYNAME');
+      if (rootName) add(root);
+    }
+  }
+
+  // Tally may return company names as NAME attributes. Parse these directly
+  // from the raw response as a final tolerant fallback. This intentionally
+  // uses a real regex word-boundary (not an escaped "\\b" literal).
+  const rawNames: string[] = [];
+  const nameRegex = /<(?:COMPANY|CURRENTCOMPANY|CURRENT_COMPANY)\b[^>]*\bNAME\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  for (const m of raw.matchAll(nameRegex)) {
+    const name = clean(m[1]);
+    if (name && !rawNames.some(x => x.toLowerCase() === name.toLowerCase())) rawNames.push(name);
+  }
+
+  if (candidates.length === 0 && doc) {
+    for (const name of rawNames) {
+      const stub = doc.createElement('COMPANY');
+      stub.setAttribute('NAME', name);
+      add(stub);
+    }
+  }
+
+  const out: SellerInfo[] = [];
+
   candidates.forEach((comp, index) => {
-    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY', 'SERVERCOMPANYNAME', 'COMPANYNAME') || clean(comp.getAttribute('NAME') || '');
+    const name = value(comp, 'NAME', 'BASICCOMPANYNAME', 'FORMALNAME', 'CURRENTCOMPANY', 'SERVERCOMPANYNAME', 'COMPANYNAME')
+      || clean(comp.getAttribute('NAME') || '');
     if (!name || seen.has(name.toLowerCase())) return;
     seen.add(name.toLowerCase());
 
     const addressLines = Array.from(comp.getElementsByTagName('ADDRESS'))
-      .map(x => clean(x.textContent || ''))
-      .filter(Boolean);
+      .map(x => clean(x.textContent || '')).filter(Boolean);
     const address = addressLines.join(', ') || value(comp, 'MAILINGADDRESS', 'COMPANYADDRESS', 'ADDRESS');
     const state = value(comp, 'STATENAME', 'STATE', 'MAILINGSTATE');
     const country = value(comp, 'COUNTRYNAME', 'COUNTRY') || 'India';
@@ -94,8 +85,6 @@ function parseCompanyXml(xml: string): SellerInfo[] {
     const pincode = value(comp, 'PINCODE', 'PINCODE1') || (address.match(/\b\d{6}\b/)?.[0] || '');
     const mobile = value(comp, 'MOBILENUMBER', 'MOBILE', 'MOBILEPHONE', 'MOBILEPHONE1');
     const phone = value(comp, 'PHONENUMBER', 'TELEPHONENUMBER', 'PHONE', 'TELEPHONE') || mobile;
-    const email = value(comp, 'EMAIL', 'EMAILID', 'EMAILADDRESS');
-    const website = value(comp, 'WEBSITE', 'WEB');
 
     out.push({
       id: `comp-tally-${index + 1}-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
@@ -109,8 +98,8 @@ function parseCompanyXml(xml: string): SellerInfo[] {
       pincode,
       phone,
       mobile,
-      email,
-      website,
+      email: value(comp, 'EMAIL', 'EMAILID', 'EMAILADDRESS'),
+      website: value(comp, 'WEBSITE', 'WEB'),
       gstin,
       pan,
       financialYearFrom: value(comp, 'STARTINGFROM', 'FINANCIALYEARFROM'),
@@ -124,9 +113,21 @@ function parseCompanyXml(xml: string): SellerInfo[] {
     });
   });
 
+  // If Tally returned malformed XML, still recover company names.
+  if (out.length === 0 && rawNames.length) {
+    return rawNames.map((name, index) => ({
+      id: `comp-tally-loose-${index + 1}-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
+      name,
+      mailingName: name,
+      address: '', state: '', stateCode: '', country: 'India', pincode: '',
+      phone: '', mobile: '', email: '', website: '', gstin: '', pan: '',
+      financialYearFrom: '', booksBeginningFrom: '', currencySymbol: '₹',
+      currencyFormalName: 'INR', tallyGuid: '', bankName: '', bankAccountNo: '', bankIfsc: '',
+    }));
+  }
+
   return out;
 }
-
 const CURRENT_COMPANY_MASTER_XML = `<ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>CurrentCompanyDetails</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE>
