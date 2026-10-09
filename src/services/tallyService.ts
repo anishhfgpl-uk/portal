@@ -2261,16 +2261,15 @@ export async function fetchSalesVouchersFromTally(
   if (selectedFrom && selectedTo && selectedFrom.getTime() > selectedTo.getTime()) throw new Error('From Date cannot be after To Date.');
 
   const fy = getCurrentFinancialYearRange();
-  const rangeFrom = selectedFrom || parseIsoDate(sellerInfo?.booksBeginningFrom || sellerInfo?.financialYearFrom || '') || parseIsoDate(fy.start)!;
+  const rangeFrom = selectedFrom || parseIsoDate(fy.start)!;
   const rangeTo = selectedTo || new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
   if (rangeFrom.getTime() > rangeTo.getTime()) throw new Error('Invoice import start date is after end date.');
 
-  const baseQueries = [
-    TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE,
-    TALLY_XML_QUERIES.SALES_VOUCHERS_COLLECTION,
-    TALLY_XML_QUERIES.SALES_VOUCHERS_SIMPLE,
-    TALLY_XML_QUERIES.DAYBOOK_EXPORT,
-  ];
+  // Safety-first: only use the date-bounded, lightweight query during live imports.
+  // The older fallback collections fetched full voucher trees / Day Book and could
+  // make Tally Prime unresponsive on large company data. If this query is unsupported,
+  // stop safely and use XML paste for diagnosis rather than launching heavier queries.
+  const baseQueries = [TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE];
   const invoiceMap = new Map<string, Invoice>();
   const parties = new Map<string, Party>();
   const items = new Map<string, StockItem>();
