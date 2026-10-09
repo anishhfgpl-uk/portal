@@ -651,9 +651,15 @@ export function parseTallyXML(xmlText: string): Document {
 
 export function getNodeValue(parent: Element | null, tagName: string): string {
   if (!parent) return '';
-  const node = parent.getElementsByTagName(tagName)[0];
-  if (!node) return '';
-  return (node.textContent || '').trim();
+  // DOM tag lookup is case-sensitive. Tally versions/export paths can vary
+  // in tag casing, so try the exact name first and then a case-insensitive scan.
+  const exact = parent.getElementsByTagName(tagName)[0];
+  if (exact) return (exact.textContent || '').trim();
+  const wanted = tagName.toUpperCase();
+  const node = Array.from(parent.getElementsByTagName('*')).find(
+    (candidate) => candidate.tagName.toUpperCase() === wanted
+  );
+  return (node?.textContent || '').trim();
 }
 
 export function getAttributeOrNode(
@@ -2023,7 +2029,12 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
     const tallyMasterId = getNodeValue(vch, 'MASTERID');
 
     // Extract Inventory Items
-    const inventoryNodes = Array.from(vch.getElementsByTagName('ALLINVENTORYENTRIES.LIST'));
+    // Tally Prime may emit inventory lines under either collection name
+    // depending on the report/view used for export.
+    const inventoryNodes = [
+      ...Array.from(vch.getElementsByTagName('ALLINVENTORYENTRIES.LIST')),
+      ...Array.from(vch.getElementsByTagName('INVENTORYENTRIES.LIST')),
+    ].filter((node, nodeIndex, all) => all.indexOf(node) === nodeIndex);
     const items: InvoiceItemRow[] = [];
 
     inventoryNodes.forEach((invNode, itemIndex) => {
