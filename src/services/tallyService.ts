@@ -1515,6 +1515,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
             <TALLYMESSAGE xmlns:UDF="TallyUDF">
                 <VOUCHER VCHTYPE="Portal" ACTION="Create" OBJVIEW="Invoice Voucher View">
                     <DATE>${voucherDate}</DATE>
+                    <EFFECTIVEDATE>${voucherDate}</EFFECTIVEDATE>
                     <VOUCHERTYPENAME>Portal</VOUCHERTYPENAME>
                     <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
                     <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
@@ -2528,6 +2529,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
         <TALLYMESSAGE xmlns:UDF="TallyUDF">
             <VOUCHER VCHTYPE="Portal" ACTION="Create" OBJVIEW="Invoice Voucher View">
                 <DATE>${voucherDate}</DATE>
+                <EFFECTIVEDATE>${voucherDate}</EFFECTIVEDATE>
                 <VOUCHERTYPENAME>Portal</VOUCHERTYPENAME>
                 <VOUCHERNUMBER>${xmlEscape(inv.invoiceNo)}</VOUCHERNUMBER>
                 <REFERENCE>${xmlEscape(inv.invoiceNo)}</REFERENCE>
