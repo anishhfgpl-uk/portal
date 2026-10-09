@@ -1742,13 +1742,13 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       block.match(/VCHTYPE="([^"]+)"/i);
     const vchType = vchTypeMatch ? vchTypeMatch[1].trim() : 'Sales';
 
-    // Extract invoice number
+    // Extract invoice number and date. Never synthesize fake TALLY-INV-N records.
     const noMatch = block.match(/<(?:VOUCHERNUMBER|REFERENCE|VCHNO)>([^<]+)<\/(?:VOUCHERNUMBER|REFERENCE|VCHNO)>/i);
-    const invoiceNo = noMatch ? noMatch[1].trim() : `TALLY-INV-${idx + 1}`;
-
-    // Extract date
+    const invoiceNo = noMatch ? noMatch[1].trim() : '';
     const dateMatch = block.match(/<DATE>([^<]+)<\/DATE>/i);
     const invoiceDate = formatTallyDateToIso(dateMatch ? dateMatch[1].trim() : '');
+    if (!invoiceNo || !invoiceDate) return;
+
 
     // Party Name
     const partyMatch = block.match(/<(?:PARTYLEDGERNAME|PARTYNAME|BASICBUYERNAME)>([^<]+)<\/(?:PARTYLEDGERNAME|PARTYNAME|BASICBUYERNAME)>/i);
@@ -1995,14 +1995,16 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
     const vchType = getAttributeOrNode(vch, 'VCHTYPE', 'VOUCHERTYPENAME') || 'Sales';
     
     // Extract invoice number
-    let invoiceNo = getNodeValue(vch, 'VOUCHERNUMBER') || getNodeValue(vch, 'REFERENCE');
-    if (!invoiceNo) {
-      invoiceNo = `TALLY-INV-${index + 1}`;
-    }
+    const invoiceNo = getNodeValue(vch, 'VOUCHERNUMBER') || getNodeValue(vch, 'REFERENCE');
 
-    // Extract date
+    // Never fabricate invoice numbers/dates for incomplete Tally voucher shells.
+    // This previously created fake TALLY-INV-N bills with a default ₹1,000 taxable amount.
     const rawDate = getNodeValue(vch, 'DATE');
     const invoiceDate = formatTallyDateToIso(rawDate);
+    if (!invoiceNo.trim() || !invoiceDate) {
+      console.warn('Skipping incomplete Tally voucher response: missing invoice number or date.');
+      return;
+    }
 
     // Party Details
     const partyName = getNodeValue(vch, 'PARTYLEDGERNAME') || getNodeValue(vch, 'PARTYNAME') || getNodeValue(vch, 'BASICBUYERNAME') || 'Cash Customer';
@@ -2265,11 +2267,10 @@ export async function fetchSalesVouchersFromTally(
   const rangeTo = selectedTo || new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
   if (rangeFrom.getTime() > rangeTo.getTime()) throw new Error('Invoice import start date is after end date.');
 
-  // Safety-first: only use the date-bounded, lightweight query during live imports.
-  // The older fallback collections fetched full voucher trees / Day Book and could
-  // make Tally Prime unresponsive on large company data. If this query is unsupported,
-  // stop safely and use XML paste for diagnosis rather than launching heavier queries.
-  const baseQueries = [TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE];
+  // First try the lightweight native query; if it returns no valid invoices, retry
+  // with a date-bounded fallback that fetches invoice fields and inventory lines only.
+  const boundedSalesFallback = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesBoundedFallback</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName><SVCURRENTCOMPANY>__PORTAL_COMPANY__</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE="Formulae" NAME="PortalSalesDateInRange">$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalIsSalesVoucher">$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalSalesInRange">$And:PortalIsSalesVoucher:PortalSalesDateInRange</SYSTEM><COLLECTION NAME="PortalSalesInvoicesBoundedFallback" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalSalesInRange</FILTER><FETCH>GUID,MASTERID,DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,PARTYNAME,PARTYGSTIN,GSTIN,PLACEOFSUPPLY,STATENAME,BASICBUYERNAME,BASICBUYERADDRESS,NARRATION,AMOUNT</FETCH><FETCH>ALLINVENTORYENTRIES.STOCKITEMNAME,ALLINVENTORYENTRIES.BILLEDQTY,ALLINVENTORYENTRIES.ACTUALQTY,ALLINVENTORYENTRIES.RATE,ALLINVENTORYENTRIES.AMOUNT,ALLINVENTORYENTRIES.HSNSACCODE,ALLINVENTORYENTRIES.HSNCODE,ALLINVENTORYENTRIES.HSN</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+  const baseQueries = [TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE, boundedSalesFallback];
   const invoiceMap = new Map<string, Invoice>();
   const parties = new Map<string, Party>();
   const items = new Map<string, StockItem>();
