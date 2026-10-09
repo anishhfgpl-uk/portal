@@ -2244,72 +2244,82 @@ export async function fetchSalesVouchersFromTally(
   const pad = (n: number) => String(n).padStart(2, '0');
   const ymd = (d: Date) => String(d.getFullYear()) + pad(d.getMonth() + 1) + pad(d.getDate());
   const iso = (d: Date) => String(d.getFullYear()) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-
   const selectedFrom = parseIsoDate(fromDate);
   const selectedTo = parseIsoDate(toDate);
-  if ((fromDate || toDate) && (!selectedFrom || !selectedTo)) {
-    throw new Error('Invalid From Date/To Date. Please select valid dates.');
-  }
-  if (selectedFrom && selectedTo && selectedFrom.getTime() > selectedTo.getTime()) {
-    throw new Error('From Date cannot be after To Date.');
-  }
+  if ((fromDate || toDate) && (!selectedFrom || !selectedTo)) throw new Error('Invalid From Date/To Date. Please select valid dates.');
+  if (selectedFrom && selectedTo && selectedFrom.getTime() > selectedTo.getTime()) throw new Error('From Date cannot be after To Date.');
 
   const fy = getCurrentFinancialYearRange();
-  const fallbackFrom = parseIsoDate(fy.start);
-  const rangeFrom = selectedFrom || parseIsoDate(sellerInfo?.booksBeginningFrom || sellerInfo?.financialYearFrom || '') || fallbackFrom;
+  const rangeFrom = selectedFrom || parseIsoDate(sellerInfo?.booksBeginningFrom || sellerInfo?.financialYearFrom || '') || parseIsoDate(fy.start)!;
   const rangeTo = selectedTo || new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-  if (!rangeFrom || !rangeTo) throw new Error('Unable to determine the Tally import date range.');
+  if (rangeFrom.getTime() > rangeTo.getTime()) throw new Error('Invoice import start date is after end date.');
 
+  const baseQueries = [
+    TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE,
+    TALLY_XML_QUERIES.SALES_VOUCHERS_COLLECTION,
+    TALLY_XML_QUERIES.SALES_VOUCHERS_SIMPLE,
+    TALLY_XML_QUERIES.DAYBOOK_EXPORT,
+  ];
   const invoiceMap = new Map<string, Invoice>();
   const parties = new Map<string, Party>();
   const items = new Map<string, StockItem>();
   let lastError: Error | null = null;
 
-  // Never parallelize Tally requests. Each request covers at most 31 calendar days.
-  for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime(); ) {
+  // Import in short sequential batches. If the lightweight custom TDL query is
+  // unsupported by this Tally build, fall back to the known HSFGPL collection queries.
+  for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime();) {
     const batchEnd = new Date(cursor.getTime());
     batchEnd.setDate(batchEnd.getDate() + 30);
     if (batchEnd.getTime() > rangeTo.getTime()) batchEnd.setTime(rangeTo.getTime());
+    let batchInvoiceCount = 0;
 
-    const xmlQuery = TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE
-      .replace('__PORTAL_COMPANY__', xmlEscape(sellerInfo?.name || config.companyName || ''))
-      .replace(
+    for (const baseQuery of baseQueries) {
+      const queryWithCompany = baseQuery.includes('__PORTAL_COMPANY__')
+        ? baseQuery.replace('__PORTAL_COMPANY__', xmlEscape(sellerInfo?.name || config.companyName || ''))
+        : baseQuery.replace(
+            '<STATICVARIABLES>',
+            '<STATICVARIABLES><SVCURRENTCOMPANY>' + xmlEscape(sellerInfo?.name || config.companyName || '') + '</SVCURRENTCOMPANY>'
+          );
+      const xmlQuery = queryWithCompany.replace(
         '<STATICVARIABLES>',
         '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + ymd(cursor) + '</SVFROMDATE><SVTODATE TYPE="Date">' + ymd(batchEnd) + '</SVTODATE>'
       );
-
-    try {
-      const res = await sendTallyRequest(xmlQuery, config);
-      if (res?.text?.trim()) {
+      try {
+        const res = await sendTallyRequest(xmlQuery, config);
+        if (!res?.text?.trim()) continue;
         const parsed = parseSalesVouchersXML(res.text, sellerInfo);
+        const before = batchInvoiceCount;
         for (const invoice of parsed.invoices) {
           const date = String(invoice.invoiceDate || '').slice(0, 10);
-          if (date < iso(cursor) || date > iso(batchEnd)) continue;
-          const key = date + '|' + String(invoice.invoiceNo).trim().toLowerCase() + '|' +
-            String(invoice.tallyGuid || invoice.tallyMasterId || '').trim().toLowerCase();
+          if (!date || date < iso(cursor) || date > iso(batchEnd)) continue;
+          const key = date + '|' + String(invoice.invoiceNo || '').trim().toLowerCase() + '|' +
+            String(invoice.tallyGuid || invoice.tallyMasterId || invoice.sellerGstin || '').trim().toLowerCase();
           invoiceMap.set(key, invoice);
         }
+        batchInvoiceCount = Array.from(invoiceMap.values()).filter(inv => {
+          const d = String(inv.invoiceDate || '').slice(0, 10);
+          return d >= iso(cursor) && d <= iso(batchEnd);
+        }).length;
         for (const party of parsed.extractedParties) parties.set(party.name.trim().toLowerCase(), party);
         for (const item of parsed.extractedItems) items.set(item.name.trim().toLowerCase(), item);
+        // Once a query successfully returns vouchers for this date range, avoid
+        // running broader fallback queries for the same batch.
+        if (batchInvoiceCount > before || parsed.invoices.length > 0) break;
+      } catch (err: any) {
+        lastError = err instanceof Error ? err : new Error(String(err?.message || err));
       }
-    } catch (err: any) {
-      lastError = err instanceof Error ? err : new Error(String(err?.message || err));
     }
 
     cursor = new Date(batchEnd.getTime());
     cursor.setDate(cursor.getDate() + 1);
-    if (cursor.getTime() <= rangeTo.getTime()) {
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
+    if (cursor.getTime() <= rangeTo.getTime()) await new Promise(resolve => setTimeout(resolve, 150));
   }
 
-  if (invoiceMap.size > 0) {
-    return {
-      invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
-      extractedParties: Array.from(parties.values()),
-      extractedItems: Array.from(items.values()),
-    };
-  }
+  if (invoiceMap.size > 0) return {
+    invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
+    extractedParties: Array.from(parties.values()),
+    extractedItems: Array.from(items.values()),
+  };
   if (lastError) throw lastError;
   return { invoices: [], extractedParties: [], extractedItems: [] };
 }
