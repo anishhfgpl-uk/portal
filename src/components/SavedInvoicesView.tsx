@@ -56,9 +56,9 @@ interface SavedInvoicesViewProps {
 
 const normalizeTallyDateForInput = (value?: string): string => {
   const raw = String(value || '').trim();
-  let m = raw.match(/^(\\d{4})[-/]?(\\d{2})[-/]?(\\d{2})$/);
+  let m = raw.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})$/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = raw.match(/^(\\d{2})[-/](\\d{2})[-/](\\d{4})$/);
+  m = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
   const parsed = new Date(raw);
   if (raw && !Number.isNaN(parsed.getTime())) {
