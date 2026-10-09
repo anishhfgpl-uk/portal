@@ -253,7 +253,7 @@ export const TALLY_XML_QUERIES = {
   // Lightweight Sales import: keep the query item-wise but fetch only the fields
   // required to build an invoice. Large ledger/GST collections can make Tally Prime
   // appear frozen, so do not request the full LedgerEntries tree during invoice import.
-  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName><SVCURRENTCOMPANY>${xmlEscape(sellerInfo?.name || config.companyName || '')}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalIsSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesInRange">$And:$IsSales:$VoucherTypeName:$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
+  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName><SVCURRENTCOMPANY>__PORTAL_COMPANY__</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalIsSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesInRange">$And:$IsSales:$VoucherTypeName:$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
   // Sales Vouchers (Invoices) Collection Query for Tally Prime
   SALES_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
@@ -2282,10 +2282,12 @@ export async function fetchSalesVouchersFromTally(
   for (const [rangeStart, rangeEnd] of ranges) {
     const startDate = String(rangeStart.getFullYear()) + pad(rangeStart.getMonth() + 1) + pad(rangeStart.getDate());
     const endDate = String(rangeEnd.getFullYear()) + pad(rangeEnd.getMonth() + 1) + pad(rangeEnd.getDate());
-    const xmlQuery = TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE.replace(
-      '<STATICVARIABLES>',
-      '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + startDate + '</SVFROMDATE><SVTODATE TYPE="Date">' + endDate + '</SVTODATE>'
-    );
+    const xmlQuery = TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE
+      .replace('__PORTAL_COMPANY__', xmlEscape(sellerInfo?.name || config.companyName || ''))
+      .replace(
+        '<STATICVARIABLES>',
+        '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + startDate + '</SVFROMDATE><SVTODATE TYPE="Date">' + endDate + '</SVTODATE>'
+      );
 
     try {
       const res = await sendTallyRequest(xmlQuery, config);
