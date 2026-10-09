@@ -23,11 +23,11 @@ export function getCurrentFinancialYearRange(now = new Date()): { start: string;
 function normalizeInvoiceDateToIso(dateValue: string | undefined | null): string {
   const value = String(dateValue || '').trim();
   if (!value) return '';
-  const iso = value.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:T.*)?$/);
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const compact = value.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  const compact = value.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
-  const dmy = value.match(/^(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})$/);
+  const dmy = value.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
   return '';
 }
