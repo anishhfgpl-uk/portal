@@ -1688,7 +1688,9 @@ export async function syncStockItemToTally(
  * Formats various Tally date string representations to standard ISO YYYY-MM-DD
  */
 export function formatTallyDateToIso(rawDate: string): string {
-  if (!rawDate) return new Date().toISOString().slice(0, 10);
+  // Missing/invalid dates must never become today's date: that can turn an
+  // incomplete Tally response into a fake invoice.
+  if (!rawDate) return '';
   const clean = rawDate.trim();
   
   // YYYYMMDD e.g. 20250415
@@ -1717,7 +1719,7 @@ export function formatTallyDateToIso(rawDate: string): string {
     if (year.length === 2) year = '20' + year;
     return `${year}-${month}-${day}`;
   }
-  return new Date().toISOString().slice(0, 10);
+  return '';
 }
 
 export interface ParsedVouchersResult {
@@ -1809,7 +1811,11 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       const amount = amtMatch ? Math.abs(parseFloat(amtMatch[1])) || 0 : (rate * qty);
 
       // Default 18% standard GST if not extracted
-      const gstRate = 18;
+      // Use GST rate and HSN from the voucher's item-level Tally metadata.
+      const rateDetails = Array.from(invNode.getElementsByTagName('RATEDETAILS.LIST'));
+      const rateValues = rateDetails.map(node => Number(getNodeValue(node, 'GSTRATE'))).filter(n => Number.isFinite(n) && n > 0);
+      const gstRate = rateValues.length ? Math.max(...rateValues) : 18;
+      const hsn = getNodeValue(invNode, 'GSTHSNNAME') || getNodeValue(invNode, 'HSNCODE') || getNodeValue(invNode, 'HSN') || '';
       const isInter = partyState.toLowerCase() !== (sellerInfo?.state || 'Delhi').toLowerCase();
       const cgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
       const sgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
@@ -1819,7 +1825,7 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       const itemRow: InvoiceItemRow = {
         id: `row-tally-${idx + 1}-${itemIdx + 1}`,
         name,
-        hsn: '84713010',
+        hsn,
         qty,
         unit: unit || 'Nos',
         rate: rate || (qty > 0 ? amount / qty : 0),
@@ -1838,7 +1844,7 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       extractedItems.push({
         id: `item-auto-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
         name,
-        hsn: '84713010',
+        hsn,
         gst: gstRate,
         unit: unit || 'Nos',
         rate: rate || 0,
