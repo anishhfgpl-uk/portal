@@ -14,8 +14,40 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased font-sans">
-    <div id="root"></div>
+    <div id="root">
+      <div id="portal-startup-fallback" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#f1f5f9;font-family:Arial,sans-serif;color:#0f172a">
+        <div style="max-width:560px;background:white;border:1px solid #cbd5e1;border-radius:12px;padding:24px;box-shadow:0 8px 24px #0f172a12">
+          <h1 style="margin:0 0 12px;font-size:22px">Anish Tally Portal</h1>
+          <p id="portal-startup-message" style="margin:0 0 8px">Portal load ho raha hai. Kripya kuch seconds intezar karein...</p>
+          <p style="margin:0;color:#64748b;font-size:13px">Agar yeh message bana rahe, to browser refresh karein. App load error hone par yahan details dikhegi.</p>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        function showStartupError(message) {
+          var fallback = document.getElementById('portal-startup-fallback');
+          var target = document.getElementById('portal-startup-message');
+          if (!fallback || !target) return;
+          target.textContent = 'Portal JavaScript load nahi ho paya: ' + String(message || 'Unknown error').slice(0, 240);
+          target.style.color = '#b91c1c';
+          var extra = document.createElement('p');
+          extra.style.cssText = 'margin:12px 0 0;color:#475569;font-size:13px';
+          extra.textContent = 'Is message ka screenshot support ko bhejein.';
+          fallback.querySelector('div').appendChild(extra);
+        }
+        window.addEventListener('error', function (event) {
+          showStartupError(event.message || (event.target && event.target.src) || 'Asset request failed');
+        }, true);
+        window.addEventListener('unhandledrejection', function (event) {
+          showStartupError(event.reason && event.reason.message || event.reason || 'Unhandled promise rejection');
+        });
+        window.setTimeout(function () {
+          var fallback = document.getElementById('portal-startup-fallback');
+          if (fallback) showStartupError('App start nahi hua (10-second timeout).');
+        }, 10000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
