@@ -1707,38 +1707,46 @@ export async function syncStockItemToTally(
  * Formats various Tally date string representations to standard ISO YYYY-MM-DD
  */
 export function formatTallyDateToIso(rawDate: string): string {
-  // Missing/invalid dates must never become today's date: that can turn an
-  // incomplete Tally response into a fake invoice.
-  if (!rawDate) return '';
-  const clean = rawDate.trim();
-  
-  // YYYYMMDD e.g. 20250415
-  if (/^\d{8}$/.test(clean)) {
-    return `${clean.substring(0, 4)}-${clean.substring(4, 6)}-${clean.substring(6, 8)}`;
+  // Never replace a missing/invalid source date with today's date.
+  const clean = String(rawDate || '').trim();
+  if (!clean) return '';
+
+  let year = '', month = '', day = '';
+  // Tally's canonical format: YYYYMMDD (e.g. 20260401).
+  let match = clean.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  if (match) [, year, month, day] = match;
+  // ISO: YYYY-MM-DD (optional timestamp suffix).
+  if (!match) {
+    match = clean.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:T.*)?$/);
+    if (match) [, year, month, day] = match;
   }
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    return clean;
+  // Local numeric date: DD/MM/YYYY or DD-MM-YYYY.
+  if (!match) {
+    match = clean.match(/^(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})$/);
+    if (match) {
+      day = match[1].padStart(2, '0');
+      month = match[2].padStart(2, '0');
+      year = match[3];
+    }
   }
-  // DD-MM-YYYY
-  if (/^\d{2}-\d{2}-\d{4}$/.test(clean)) {
-    const parts = clean.split('-');
-    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  // DD-MMM-YYYY or DD-MMM-YY (e.g. 01-Apr-2026).
+  if (!match) {
+    match = clean.match(/^(\\d{1,2})[-/ ]([A-Za-z]{3})[-/ ](\\d{2,4})$/);
+    if (match) {
+      day = match[1].padStart(2, '0');
+      const months: Record<string, string> = {
+        jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+        jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+      };
+      month = months[match[2].toLowerCase()] || '';
+      year = match[3].length === 2 ? '20' + match[3] : match[3];
+    }
   }
-  // DD-MMM-YYYY or DD-MMM-YY e.g. 15-Apr-2025 or 15-Apr-25
-  const match = clean.match(/^(\d{1,2})[-/ ]([A-Za-z]{3})[-/ ](\d{2,4})$/);
-  if (match) {
-    const day = match[1].padStart(2, '0');
-    const months: Record<string, string> = {
-      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
-      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
-    };
-    const month = months[match[2].toLowerCase()] || '01';
-    let year = match[3];
-    if (year.length === 2) year = '20' + year;
-    return `${year}-${month}-${day}`;
-  }
-  return '';
+  if (!year || !month || !day) return '';
+  const y = Number(year), m = Number(month), d = Number(day);
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== m - 1 || check.getUTCDate() !== d) return '';
+  return `${year}-${month}-${day}`;
 }
 
 export interface ParsedVouchersResult {
