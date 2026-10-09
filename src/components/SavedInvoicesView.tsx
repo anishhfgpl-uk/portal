@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Search,
   Printer,
@@ -54,6 +54,19 @@ interface SavedInvoicesViewProps {
   onTestConnection: () => void;
 }
 
+const normalizeTallyDateForInput = (value?: string): string => {
+  const raw = String(value || '').trim();
+  let m = raw.match(/^(\\d{4})[-/]?(\\d{2})[-/]?(\\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = raw.match(/^(\\d{2})[-/](\\d{2})[-/](\\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  const parsed = new Date(raw);
+  if (raw && !Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+  }
+  return '';
+};
+
 export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   invoices,
   onPrintInvoice,
@@ -81,11 +94,17 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [isImportingAccountingVouchers, setIsImportingAccountingVouchers] = useState<boolean>(false);
   const [accountingVouchers, setAccountingVouchers] = useState<TallyVoucher[]>([]);
   const [invoiceFromDate, setInvoiceFromDate] = useState<string>(() => {
+    const companyStart = normalizeTallyDateForInput(sellerInfo.booksBeginningFrom || sellerInfo.financialYearFrom);
+    if (companyStart) return companyStart;
     const now = new Date();
     const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
     return `${fyStartYear}-04-01`;
   });
   const [invoiceToDate, setInvoiceToDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  useEffect(() => {
+    const companyStart = normalizeTallyDateForInput(sellerInfo.booksBeginningFrom || sellerInfo.financialYearFrom);
+    if (companyStart) setInvoiceFromDate(companyStart);
+  }, [sellerInfo.name, sellerInfo.booksBeginningFrom, sellerInfo.financialYearFrom]);
   const [isExportingPending, setIsExportingPending] = useState<boolean>(false);
   const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
@@ -104,7 +123,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
   // Invoices filtered by company
   const companyScopedInvoices = invoices.filter((inv) => {
-    if (!isCurrentFyInvoice(inv)) return false;
+    // Show historical invoices imported from Tally; Portal-created invoices remain current-FY scoped.
     if (companyFilterMode === 'all') return true;
     if (inv.sellerGstin && sellerInfo.gstin) {
       return inv.sellerGstin.trim().toLowerCase() === sellerInfo.gstin.trim().toLowerCase();
@@ -196,15 +215,19 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
       // De-duplicate against existing invoices
       const existingMap = new Map<string, Invoice>();
-      invoices.filter(isCurrentFyInvoice).forEach((inv) => {
-        existingMap.set(inv.invoiceNo.trim().toLowerCase(), inv);
+      const invoiceDedupKey = (inv: Invoice) => {
+        const owner = (inv.sellerGstin || inv.sellerName || sellerInfo.gstin || sellerInfo.name || '').trim().toLowerCase();
+        return owner + '|' + inv.invoiceNo.trim().toLowerCase();
+      };
+      invoices.forEach((inv) => {
+        existingMap.set(invoiceDedupKey(inv), inv);
       });
 
       const newInvoices: Invoice[] = [];
       let duplicateCount = 0;
 
       result.invoices.forEach((tallyInv) => {
-        const key = tallyInv.invoiceNo.trim().toLowerCase();
+        const key = invoiceDedupKey(tallyInv);
         if (existingMap.has(key)) {
           duplicateCount++;
         } else {
