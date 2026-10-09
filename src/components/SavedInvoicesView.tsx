@@ -123,7 +123,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
   // Invoices filtered by company
   const companyScopedInvoices = invoices.filter((inv) => {
-    // Show historical invoices imported from Tally; Portal-created invoices remain current-FY scoped.
+    if (!isCurrentFyInvoice(inv) && inv.source !== 'tally_import') return false;
     if (companyFilterMode === 'all') return true;
     if (inv.sellerGstin && sellerInfo.gstin) {
       return inv.sellerGstin.trim().toLowerCase() === sellerInfo.gstin.trim().toLowerCase();
