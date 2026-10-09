@@ -1812,10 +1812,15 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
 
       // Default 18% standard GST if not extracted
       // Use GST rate and HSN from the voucher's item-level Tally metadata.
-      const rateDetails = Array.from(invNode.getElementsByTagName('RATEDETAILS.LIST'));
-      const rateValues = rateDetails.map(node => Number(getNodeValue(node, 'GSTRATE'))).filter(n => Number.isFinite(n) && n > 0);
+      const rateDetailsText = itemBlock.match(/<RATEDETAILS\.LIST[\s\S]*?<\/RATEDETAILS\.LIST>/gi) || [];
+      const rateValues = rateDetailsText.flatMap(detail => {
+        const match = detail.match(/<GSTRATE[^>]*>([^<]+)<\/GSTRATE>/i);
+        const value = match ? Number(match[1]) : 0;
+        return Number.isFinite(value) && value > 0 ? [value] : [];
+      });
       const gstRate = rateValues.length ? Math.max(...rateValues) : 18;
-      const hsn = getNodeValue(invNode, 'GSTHSNNAME') || getNodeValue(invNode, 'HSNCODE') || getNodeValue(invNode, 'HSN') || '';
+      const hsnMatch = itemBlock.match(/<(?:GSTHSNNAME|HSNSACCODE|HSNCODE|HSN)[^>]*>([^<]+)<\/(?:GSTHSNNAME|HSNSACCODE|HSNCODE|HSN)>/i);
+      const hsn = hsnMatch ? hsnMatch[1].trim() : '';
       const isInter = partyState.toLowerCase() !== (sellerInfo?.state || 'Delhi').toLowerCase();
       const cgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
       const sgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
