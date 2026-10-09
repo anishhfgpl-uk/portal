@@ -19,12 +19,33 @@ export function getCurrentFinancialYearRange(now = new Date()): { start: string;
   };
 }
 
+/** Normalize portal dates to ISO YYYY-MM-DD without silently substituting today's date. */
+function normalizeInvoiceDateToIso(dateValue: string | undefined | null): string {
+  const value = String(dateValue || '').trim();
+  if (!value) return '';
+  const iso = value.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:T.*)?$/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const compact = value.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  const dmy = value.match(/^(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  return '';
+}
+
+function formatInvoiceDateForTally(dateValue: string | undefined | null): string {
+  const iso = normalizeInvoiceDateToIso(dateValue);
+  if (!iso) return '';
+  const [year, month, day] = iso.split('-');
+  const y = Number(year), m = Number(month), d = Number(day);
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== m - 1 || check.getUTCDate() !== d) return '';
+  return `${year}${month}${day}`;
+}
+
 function isDateInCurrentFinancialYear(dateValue: string, now = new Date()): boolean {
   const range = getCurrentFinancialYearRange(now);
-  const normalized = (dateValue || '').trim();
-  if (!normalized) return false;
-  const iso = normalized.includes('T') ? normalized.slice(0, 10) : normalized;
-  return iso >= range.start && iso <= range.end;
+  const iso = normalizeInvoiceDateToIso(dateValue);
+  return Boolean(iso && iso >= range.start && iso <= range.end);
 }
 
 export const DEFAULT_TALLY_CONFIG: TallyConfig = {
@@ -1396,10 +1417,7 @@ export function parseCompaniesXML(xmlInput: string | Document): SellerInfo[] {
  */
 export function generateTallySalesVoucherXML(invoice: Invoice, companyName = ''): string {
   // Tally Prime Item Invoice / Accounting Invoice mode.
-  const rawDate = (invoice.invoiceDate || '').replace(/[^0-9]/g, '');
-  const voucherDate = rawDate.length === 8
-    ? rawDate
-    : new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const voucherDate = formatInvoiceDateForTally(invoice.invoiceDate);
 
   const isInterState = Boolean(invoice.isInterState);
 
@@ -2400,6 +2418,12 @@ export async function exportInvoiceToTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG,
   companyName = ''
 ): Promise<{ success: boolean; message: string; responseXml?: string }> {
+  if (!formatInvoiceDateForTally(invoice.invoiceDate)) {
+    return {
+      success: false,
+      message: `Invoice date "${invoice.invoiceDate || ''}" valid nahi hai. Date ko YYYY-MM-DD ya DD/MM/YYYY format mein set karke dobara sync karein.`,
+    };
+  }
   if (!isDateInCurrentFinancialYear(invoice.invoiceDate)) {
     return {
       success: false,
@@ -2467,8 +2491,7 @@ export async function exportInvoiceToTally(
 export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyName = ''): string {
   const voucherXmls = invoices
     .map(inv => {
-      const cleanDate = inv.invoiceDate.replace(/[-/]/g, '');
-      const voucherDate = cleanDate.length === 8 ? cleanDate : new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const voucherDate = formatInvoiceDateForTally(inv.invoiceDate);
       const isInterState = inv.isInterState;
 
       const inventoryEntriesXML = inv.items
