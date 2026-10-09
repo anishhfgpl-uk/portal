@@ -2289,12 +2289,16 @@ export async function fetchSalesVouchersFromTally(
         if (!res?.text?.trim()) continue;
         const parsed = parseSalesVouchersXML(res.text, sellerInfo);
         const before = batchInvoiceCount;
+        let acceptedFromThisQuery = 0;
         for (const invoice of parsed.invoices) {
           const date = String(invoice.invoiceDate || '').slice(0, 10);
+          // Some Tally reports ignore SVFROMDATE/SVTODATE. Do not let an
+          // out-of-range voucher stop the fallback queries for this batch.
           if (!date || date < iso(cursor) || date > iso(batchEnd)) continue;
           const key = date + '|' + String(invoice.invoiceNo || '').trim().toLowerCase() + '|' +
             String(invoice.tallyGuid || invoice.tallyMasterId || invoice.sellerGstin || '').trim().toLowerCase();
           invoiceMap.set(key, invoice);
+          acceptedFromThisQuery++;
         }
         batchInvoiceCount = Array.from(invoiceMap.values()).filter(inv => {
           const d = String(inv.invoiceDate || '').slice(0, 10);
@@ -2302,9 +2306,9 @@ export async function fetchSalesVouchersFromTally(
         }).length;
         for (const party of parsed.extractedParties) parties.set(party.name.trim().toLowerCase(), party);
         for (const item of parsed.extractedItems) items.set(item.name.trim().toLowerCase(), item);
-        // Once a query successfully returns vouchers for this date range, avoid
-        // running broader fallback queries for the same batch.
-        if (batchInvoiceCount > before || parsed.invoices.length > 0) break;
+        // Continue to the next fallback query unless this query actually
+        // yielded an invoice inside the requested batch date range.
+        if (batchInvoiceCount > before || acceptedFromThisQuery > 0) break;
       } catch (err: any) {
         lastError = err instanceof Error ? err : new Error(String(err?.message || err));
       }
