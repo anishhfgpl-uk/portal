@@ -5,34 +5,54 @@ export async function pushXmlToTally(
   xmlPayload: string
 ): Promise<{ success: boolean; summary: SyncSummary; errorDetail?: string }> {
   try {
-    const response = await fetch(tallyHost, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/xml; charset=utf-8',
-      },
-      body: xmlPayload,
-    });
+    let responseText = '';
 
-    if (!response.ok) {
-      return {
-        success: false,
-        summary: {
-          created: 0,
-          altered: 0,
-          deleted: 0,
-          combined: 0,
-          ignored: 0,
-          errors: 1,
-          exceptions: 0,
-        },
-        errorDetail: `Tally server responded with HTTP status ${response.status}: ${response.statusText}`,
-      };
+    // First try server proxy route to avoid browser CORS/PNA restrictions
+    try {
+      const proxyRes = await fetch('/api/tally/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: tallyHost, xml: xmlPayload }),
+      });
+      if (proxyRes.ok) {
+        const json = await proxyRes.json();
+        if (json.success && json.xml) {
+          responseText = json.xml;
+        }
+      }
+    } catch {
+      // Fall through to direct fetch
     }
 
-    const responseText = await response.text();
-    const summary = parseTallyResponse(responseText);
+    if (!responseText) {
+      const response = await fetch(tallyHost, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/xml; charset=utf-8',
+        },
+        body: xmlPayload,
+      });
 
-    const isSuccess = summary.created > 0 && summary.errors === 0 && summary.exceptions === 0;
+      if (!response.ok) {
+        return {
+          success: false,
+          summary: {
+            created: 0,
+            altered: 0,
+            deleted: 0,
+            combined: 0,
+            ignored: 0,
+            errors: 1,
+            exceptions: 0,
+          },
+          errorDetail: `Tally server responded with HTTP status ${response.status}: ${response.statusText}`,
+        };
+      }
+      responseText = await response.text();
+    }
+
+    const summary = parseTallyResponse(responseText);
+    const isSuccess = (summary.created > 0 || summary.altered > 0) && summary.errors === 0;
 
     return {
       success: isSuccess,

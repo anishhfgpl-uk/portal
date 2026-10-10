@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Plus, Trash2, Save, FileText, ShieldCheck } from 'lucide-react';
 import { Invoice, SellerInfo } from '../types';
-import { buildGstr1JsonPayload } from '../services/gstr1Service';
+import { formatToGstPortalDate } from '../services/gstr1Service';
 import { buildFullGstr1Json, downloadFullGstr1Json, emptyGstr1ExtendedData, Gstr1ExtendedData, Gstr1NoteRow, Gstr1ExportRow, Gstr1AdvanceRow, Gstr1NilRow, Gstr1AmendmentRow, Gstr1EcomRow, loadGstr1ExtendedData, saveGstr1ExtendedData } from '../services/gstr1AdvancedService';
 
 interface Props { invoices: Invoice[]; sellerInfo: SellerInfo; period: string; }
@@ -14,14 +14,13 @@ export const Gstr1AdvancedView: React.FC<Props> = ({ invoices, sellerInfo, perio
   const [section, setSection] = useState<'notes'|'exports'|'advances'|'nil'|'amendments'|'ecom'>('notes');
   const [saved, setSaved] = useState(false);
   useEffect(() => setData(loadGstr1ExtendedData(sellerInfo, period)), [sellerInfo.gstin, sellerInfo.name, period]);
-  const base = useMemo(() => buildGstr1JsonPayload({} as any), []);
   // The real base payload is reconstructed below from the invoice set so this panel is standalone.
   const makeBase = () => {
     const grouped: Record<string, any[]> = {};
     invoices.forEach(i => {
       if (!i.gstin) return;
       const pos = i.stateCode || sellerInfo.stateCode || '07';
-      const row = { inum:i.invoiceNo, idt:i.invoiceDate, val:i.grandTotal, pos, rchrg:'N', inv_typ:'R', itms:(i.items||[]).map((x,n)=>({num:n+1,itm_det:{rt:x.gstRate,txval:x.taxableAmount,iamt:x.igstAmount,camt:x.cgstAmount,samt:x.sgstAmount,csamt:0}})) };
+      const row = { inum:i.invoiceNo, idt:formatToGstPortalDate(i.invoiceDate), val:i.grandTotal, pos, rchrg:'N', inv_typ:'R', itms:(i.items||[]).map((x,n)=>({num:n+1,itm_det:{rt:x.gstRate,txval:x.taxableAmount,iamt:x.igstAmount,camt:x.cgstAmount,samt:x.sgstAmount,csamt:0}})) };
       (grouped[i.gstin.toUpperCase()] ||= []).push(row);
     });
     return { gstin:(sellerInfo.gstin||'').toUpperCase(), fp:period, gt:invoices.reduce((a,i)=>a+i.grandTotal,0), cur_gt:invoices.reduce((a,i)=>a+i.grandTotal,0), version:'GST3.1.4', hash:'hash', ...(Object.keys(grouped).length?{b2b:Object.entries(grouped).map(([ctin,inv])=>({ctin,inv}))}:{}), doc_issue:{doc_det:[]} };
@@ -64,6 +63,6 @@ export const Gstr1AdvancedView: React.FC<Props> = ({ invoices, sellerInfo, perio
 
     {section==='ecom' && <div className="space-y-3"><div className="flex gap-2"><button onClick={()=>addEcom(false)} className="px-3 py-2 bg-emerald-600 rounded-lg text-xs text-white"><Plus className="w-3 h-3 inline"/> Add E-Commerce Supply</button><button onClick={()=>addEcom(true)} className="px-3 py-2 bg-blue-600 rounded-lg text-xs text-white"><Plus className="w-3 h-3 inline"/> Add E-Commerce Amendment</button></div>{[...data.ecom.map(x=>[x,'ecom'] as const),...data.ecomAmendments.map(x=>[x,'ecomAmendments'] as const)].map(([r,name])=><div key={r.id} className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800">{field('ECO GSTIN',r.etin,v=>update({...data,[name]:(data[name] as Gstr1EcomRow[]).map(x=>x.id===r.id?{...x,etin:v}:x)}))}{field('Type',r.typ,v=>update({...data,[name]:(data[name] as Gstr1EcomRow[]).map(x=>x.id===r.id?{...x,typ:v as any}:x)}))}{field('POS',r.pos,v=>update({...data,[name]:(data[name] as Gstr1EcomRow[]).map(x=>x.id===r.id?{...x,pos:v}:x)}))}{field('Taxable',r.txval,v=>update({...data,[name]:(data[name] as Gstr1EcomRow[]).map(x=>x.id===r.id?{...x,txval:num(v)}:x)}),'number')}{field('Rate',r.rt,v=>update({...data,[name]:(data[name] as Gstr1EcomRow[]).map(x=>x.id===r.id?{...x,rt:num(v)}:x)}),'number')}{field('IGST',r.iamt,v=>update({...data,[name]:(data[name] as Gstr1EcomRow[]).map(x=>x.id===r.id?{...x,iamt:num(v)}:x)}),'number')}<button onClick={()=>remove(name,r.id)} className="text-rose-400"><Trash2 className="w-3.5 h-3.5"/></button></div>)}</div>}
 
-    <div className="border-t border-slate-800 pt-4 flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between"><div className="text-xs text-slate-400"><FileText className="w-4 h-4 inline mr-1 text-emerald-400"/>Sections entered: <strong className="text-white">{Object.values(data).reduce((a,v)=>a+v.length,0)}</strong>. Data is stored per GSTIN and return period.</div><details className="max-w-full"><summary className="cursor-pointer text-xs text-blue-400">Preview Full JSON</summary><pre className="mt-2 max-h-72 overflow-auto bg-slate-950 p-3 rounded-lg text-[10px] text-emerald-300">{JSON.stringify(fullJson,null,2)}</pre></details></div>
+    <div className="border-t border-slate-800 pt-4 flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between"><div className="text-xs text-slate-400"><FileText className="w-4 h-4 inline mr-1 text-emerald-400"/>Sections entered: <strong className="text-white">{Object.values(data).reduce<number>((a,v)=>a+(Array.isArray(v) ? v.length : 0),0)}</strong>. Data is stored per GSTIN and return period.</div><details className="max-w-full"><summary className="cursor-pointer text-xs text-blue-400">Preview Full JSON</summary><pre className="mt-2 max-h-72 overflow-auto bg-slate-950 p-3 rounded-lg text-[10px] text-emerald-300">{JSON.stringify(fullJson,null,2)}</pre></details></div>
   </div>;
 };

@@ -17,34 +17,39 @@ export function formatDateToTally(dateStr: string): string {
 }
 
 export function generateVoucherXml(invoice: Invoice, config: TallyConfig): string {
-  const tallyDate = formatDateToTally(invoice.date);
-  const companyTag = config.companyName.trim()
+  const tallyDate = formatDateToTally(invoice.date || invoice.invoiceDate);
+  const companyTag = config.companyName?.trim()
     ? `<SVCURRENTCOMPANY>${sanitizeXml(config.companyName)}</SVCURRENTCOMPANY>`
     : '';
 
-  const totalTaxable = invoice.items.reduce((sum, item) => sum + item.amount, 0);
+  const totalTaxable = invoice.items.reduce((sum, item) => sum + (item.amount ?? item.taxableAmount ?? (item.qty * item.rate)), 0);
 
   let inventoryEntriesXml = '';
   if (invoice.items && invoice.items.length > 0) {
     inventoryEntriesXml = invoice.items
       .map(
-        (item) => `
+        (item) => {
+          const itemAmt = item.amount ?? item.taxableAmount ?? (item.qty * item.rate);
+          return `
           <ALLINVENTORYENTRIES.LIST>
             <STOCKITEMNAME>${sanitizeXml(item.name)}</STOCKITEMNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <RATE>${item.rate}/${sanitizeXml(item.unit || 'PCS')}</RATE>
             <ACTUALQTY>${item.qty} ${sanitizeXml(item.unit || 'PCS')}</ACTUALQTY>
             <BILLEDQTY>${item.qty} ${sanitizeXml(item.unit || 'PCS')}</BILLEDQTY>
-            <AMOUNT>${item.amount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${itemAmt.toFixed(2)}</AMOUNT>
             <ACCOUNTINGALLOCATIONS.LIST>
-              <LEDGERNAME>${sanitizeXml(invoice.salesLedger || config.salesLedgerName)}</LEDGERNAME>
+              <LEDGERNAME>${sanitizeXml(invoice.salesLedger || config.salesLedgerName || 'Sales')}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-              <AMOUNT>${item.amount.toFixed(2)}</AMOUNT>
+              <AMOUNT>${itemAmt.toFixed(2)}</AMOUNT>
             </ACCOUNTINGALLOCATIONS.LIST>
-          </ALLINVENTORYENTRIES.LIST>`
+          </ALLINVENTORYENTRIES.LIST>`;
+        }
       )
       .join('\n');
   }
+
+  const grandTotal = invoice.totalAmount ?? invoice.grandTotal ?? 0;
 
   // Tax and party ledger entries
   const partyLedgerXml = `
@@ -52,11 +57,11 @@ export function generateVoucherXml(invoice: Invoice, config: TallyConfig): strin
             <LEDGERNAME>${sanitizeXml(invoice.partyName)}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
             <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-            <AMOUNT>-${invoice.totalAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>-${grandTotal.toFixed(2)}</AMOUNT>
             <BILLALLOCATIONS.LIST>
               <NAME>${sanitizeXml(invoice.invoiceNo)}</NAME>
               <BILLTYPE>New Ref</BILLTYPE>
-              <AMOUNT>-${invoice.totalAmount.toFixed(2)}</AMOUNT>
+              <AMOUNT>-${grandTotal.toFixed(2)}</AMOUNT>
             </BILLALLOCATIONS.LIST>
           </ALLLEDGERENTRIES.LIST>`;
 
@@ -65,48 +70,53 @@ export function generateVoucherXml(invoice: Invoice, config: TallyConfig): strin
     invoice.items.length === 0
       ? `
           <ALLLEDGERENTRIES.LIST>
-            <LEDGERNAME>${sanitizeXml(invoice.salesLedger || config.salesLedgerName)}</LEDGERNAME>
+            <LEDGERNAME>${sanitizeXml(invoice.salesLedger || config.salesLedgerName || 'Sales')}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <AMOUNT>${totalTaxable.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`
       : '';
 
+  const igstAmt = invoice.igstAmount ?? invoice.totalIgst ?? 0;
+  const cgstAmt = invoice.cgstAmount ?? invoice.totalCgst ?? 0;
+  const sgstAmt = invoice.sgstAmount ?? invoice.totalSgst ?? 0;
+
   let taxLedgersXml = '';
   if (invoice.isInterState) {
-    if (invoice.igstAmount > 0) {
+    if (igstAmt > 0) {
       taxLedgersXml += `
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${sanitizeXml(config.igstLedgerName || 'IGST')}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${invoice.igstAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${igstAmt.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`;
     }
   } else {
-    if (invoice.cgstAmount > 0) {
+    if (cgstAmt > 0) {
       taxLedgersXml += `
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${sanitizeXml(config.cgstLedgerName || 'CGST')}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${invoice.cgstAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${cgstAmt.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`;
     }
-    if (invoice.sgstAmount > 0) {
+    if (sgstAmt > 0) {
       taxLedgersXml += `
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${sanitizeXml(config.sgstLedgerName || 'SGST')}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>${invoice.sgstAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${sgstAmt.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`;
     }
   }
 
   let roundOffXml = '';
-  if (Math.abs(invoice.roundOff) > 0.001) {
+  const roundOff = invoice.roundOff ?? 0;
+  if (Math.abs(roundOff) > 0.001) {
     roundOffXml = `
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${sanitizeXml(config.roundOffLedgerName || 'Round Off')}</LEDGERNAME>
-            <ISDEEMEDPOSITIVE>${invoice.roundOff < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>
-            <AMOUNT>${Math.abs(invoice.roundOff).toFixed(2)}</AMOUNT>
+            <ISDEEMEDPOSITIVE>${roundOff < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>
+            <AMOUNT>${Math.abs(roundOff).toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>`;
   }
 
@@ -116,10 +126,10 @@ export function generateVoucherXml(invoice: Invoice, config: TallyConfig): strin
 
   return `
         <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          <VOUCHER VCHTYPE="${sanitizeXml(invoice.voucherType || config.salesVoucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
+          <VOUCHER VCHTYPE="${sanitizeXml(invoice.voucherType || config.salesVoucherType || 'Sales')}" ACTION="Create" OBJVIEW="Invoice Voucher View">
             <DATE>${tallyDate}</DATE>
             <EFFECTIVEDATE>${tallyDate}</EFFECTIVEDATE>
-            <VOUCHERTYPENAME>${sanitizeXml(invoice.voucherType || config.salesVoucherType)}</VOUCHERTYPENAME>
+            <VOUCHERTYPENAME>${sanitizeXml(invoice.voucherType || config.salesVoucherType || 'Sales')}</VOUCHERTYPENAME>
             <VOUCHERNUMBER>${sanitizeXml(invoice.invoiceNo)}</VOUCHERNUMBER>
             <REFERENCE>${sanitizeXml(invoice.invoiceNo)}</REFERENCE>
             <PARTYLEDGERNAME>${sanitizeXml(invoice.partyName)}</PARTYLEDGERNAME>
@@ -195,7 +205,7 @@ export function generateMastersXml(invoices: Invoice[], config: TallyConfig): st
             <PARENT>Sundry Debtors</PARENT>
             <ISBILLWISEON>Yes</ISBILLWISEON>
             ${inv.partyState ? `<STATENAME>${sanitizeXml(inv.partyState)}</STATENAME>` : ''}
-            ${inv.partyGstin ? `<PARTYGSTIN>${sanitizeXml(inv.partyGstin)}</PARTYGSTIN>` : ''}
+            ${(inv.partyGstin || inv.gstin) ? `<PARTYGSTIN>${sanitizeXml(inv.partyGstin || inv.gstin)}</PARTYGSTIN>` : ''}
           </LEDGER>
         </TALLYMESSAGE>`
     )

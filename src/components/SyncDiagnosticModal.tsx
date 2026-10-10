@@ -8,7 +8,7 @@ interface Props {
   invoice: Invoice | null;
   config: TallyConfig;
   onClose: () => void;
-  onUpdateInvoiceStatus: (id: string, status: Invoice['syncStatus'], message: string, xmlResponse?: string) => void;
+  onUpdateInvoiceStatus: (id: string, status: any, message: string, xmlResponse?: string) => void;
 }
 
 export const SyncDiagnosticModal: React.FC<Props> = ({
@@ -49,7 +49,7 @@ export const SyncDiagnosticModal: React.FC<Props> = ({
   </BODY>
 </ENVELOPE>`;
 
-    const res = await pushXmlToTally(config.host, envelopeXml);
+    const res = await pushXmlToTally(config.host || config.tallyUrl || 'http://127.0.0.1:9000', envelopeXml);
     setIsTesting(false);
     setTestResult({
       tested: true,

@@ -271,10 +271,8 @@ export const TALLY_XML_QUERIES = {
     </DESC></BODY>
   </ENVELOPE>`,
 
-  // Lightweight Sales import: keep the query item-wise but fetch only the fields
-  // required to build an invoice. Large ledger/GST collections can make Tally Prime
-  // appear frozen, so do not request the full LedgerEntries tree during invoice import.
-  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName><SVCURRENTCOMPANY>__PORTAL_COMPANY__</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalIsSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,VoucherTypeName,PartyLedgerName,PartyName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.StockItemName,AllInventoryEntries.BilledQty,AllInventoryEntries.ActualQty,AllInventoryEntries.Rate,AllInventoryEntries.Amount,AllInventoryEntries.HSNSACCode,AllInventoryEntries.HSNCODE,AllInventoryEntries.HSN</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesInRange">$$And:$$IsSales:$VoucherTypeName:$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
+  // Sales Vouchers query with date bounding, inventory and ledger entries
+  SALES_VOUCHERS_NATIVE: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>__PORTAL_COMPANY__</STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.List</FETCH><FETCH>LedgerEntries.List</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesOnly">$$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalDateInRange">$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalSalesInRange">$$And:PortalIsSalesOnly:PortalDateInRange</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`,
   // Sales Vouchers (Invoices) Collection Query for Tally Prime
   SALES_VOUCHERS_COLLECTION: `<ENVELOPE>
     <HEADER>
@@ -287,6 +285,7 @@ export const TALLY_XML_QUERIES = {
         <DESC>
             <STATICVARIABLES>
                 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                <SVViewName>Accounting Voucher View</SVViewName>
             </STATICVARIABLES>
             <TDL>
                 <TDLMESSAGE>
@@ -299,13 +298,18 @@ export const TALLY_XML_QUERIES = {
                             REFERENCE,
                             PARTYLEDGERNAME,
                             PARTYNAME,
+                            BASICBUYERNAME,
                             PARTYGSTIN,
+                            GSTIN,
                             STATENAME,
                             PLACEOFSUPPLY,
                             COUNTRYOFRESIDENCE,
                             BASICBUYERADDRESS,
                             ADDRESS,
                             NARRATION,
+                            AMOUNT,
+                            ISCANCELLED,
+                            ISOPTIONAL,
                             GUID,
                             MASTERID,
                             ALLINVENTORYENTRIES.LIST,
@@ -1415,24 +1419,35 @@ export function parseCompaniesXML(xmlInput: string | Document): SellerInfo[] {
 /**
  * Generates standard Tally Prime Sales Voucher XML for seamless import
  */
-export function generateTallySalesVoucherXML(invoice: Invoice, companyName = ''): string {
+export function generateTallySalesVoucherXML(
+  invoice: Invoice,
+  companyName = '',
+  config: TallyConfig = DEFAULT_TALLY_CONFIG
+): string {
   // Tally Prime Item Invoice / Accounting Invoice mode.
   const voucherDate = formatInvoiceDateForTally(invoice.invoiceDate);
-
   const isInterState = Boolean(invoice.isInterState);
+
+  const voucherType = invoice.tallyVoucherType || config.salesVoucherType || config.defaultVoucherType || 'Sales';
+  const salesLedger = invoice.salesLedger || config.salesLedgerName || 'Sales Account';
+  const cgstLedger = config.cgstLedgerName || 'Output CGST';
+  const sgstLedger = config.sgstLedgerName || 'Output SGST';
+  const igstLedger = config.igstLedgerName || 'Output IGST';
+  const roundOffLedger = config.roundOffLedgerName || 'Round Off';
+
+  const hasItems = Array.isArray(invoice.items) && invoice.items.length > 0;
 
   // One inventory row per portal invoice item. Each row carries stock item,
   // quantity, rate and taxable amount, so Tally opens it as an Item Invoice.
-  const inventoryEntriesXML = (invoice.items || []).map(item => {
-    // Tally Item Invoice: quantity/rate are ALWAYS sent explicitly and positively.
-    // Credit-side amounts remain negative in Tally XML; this is the accounting sign,
-    // not a negative quantity/rate. Never derive quantity/rate from the amount.
-    const qty = Math.abs(Number(item.qty)) || 1;
-    const rate = Math.abs(Number(item.rate)) || 0;
-    const amount = +(qty * rate).toFixed(2);
-    const unit = item.unit || 'Nos';
+  let inventoryEntriesXML = '';
+  if (hasItems) {
+    inventoryEntriesXML = invoice.items.map(item => {
+      const qty = Math.abs(Number(item.qty)) || 1;
+      const rate = Math.abs(Number(item.rate)) || 0;
+      const amount = +(qty * rate).toFixed(2);
+      const unit = item.unit || 'Nos';
 
-    return `
+      return `
         <ALLINVENTORYENTRIES.LIST>
             <STOCKITEMNAME>${xmlEscape(item.name)}</STOCKITEMNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -1443,12 +1458,24 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
             <BILLEDQTY>${qty.toFixed(3)} ${xmlEscape(unit)}</BILLEDQTY>
             <AMOUNT>${amount.toFixed(2)}</AMOUNT>
             <ACCOUNTINGALLOCATIONS.LIST>
-                <LEDGERNAME>Sales Account</LEDGERNAME>
+                <LEDGERNAME>${xmlEscape(salesLedger)}</LEDGERNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
                 <AMOUNT>${amount.toFixed(2)}</AMOUNT>
             </ACCOUNTINGALLOCATIONS.LIST>
         </ALLINVENTORYENTRIES.LIST>`;
-  }).join('\\n');
+    }).join('\n');
+  }
+
+  // If no inventory entries, add sales ledger entry
+  let serviceSalesLedgerXML = '';
+  if (!hasItems) {
+    serviceSalesLedgerXML = `
+        <LEDGERENTRIES.LIST>
+            <LEDGERNAME>${xmlEscape(salesLedger)}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <AMOUNT>${invoice.subtotalTaxable.toFixed(2)}</AMOUNT>
+        </LEDGERENTRIES.LIST>`;
+  }
 
   let additionalExpensesXML = '';
   if (invoice.freightAmount && invoice.freightAmount > 0) {
@@ -1456,7 +1483,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         <LEDGERENTRIES.LIST>
             <LEDGERNAME>Freight &amp; Forwarding Charges</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${invoice.freightAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${invoice.freightAmount.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
   }
   if (invoice.labourAmount && invoice.labourAmount > 0) {
@@ -1464,7 +1491,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         <LEDGERENTRIES.LIST>
             <LEDGERNAME>Labour &amp; Handling Charges</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${invoice.labourAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${invoice.labourAmount.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
   }
   if (invoice.otherExpenseAmount && invoice.otherExpenseAmount > 0) {
@@ -1473,7 +1500,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
         <LEDGERENTRIES.LIST>
             <LEDGERNAME>${xmlEscape(expenseLabel)}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-${invoice.otherExpenseAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>${invoice.otherExpenseAmount.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
   }
 
@@ -1482,7 +1509,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     if (invoice.totalIgst > 0) {
       taxEntriesXML += `
         <LEDGERENTRIES.LIST>
-            <LEDGERNAME>Output IGST</LEDGERNAME>
+            <LEDGERNAME>${xmlEscape(igstLedger)}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <AMOUNT>${invoice.totalIgst.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
@@ -1491,7 +1518,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     if (invoice.totalCgst > 0) {
       taxEntriesXML += `
         <LEDGERENTRIES.LIST>
-            <LEDGERNAME>Output CGST</LEDGERNAME>
+            <LEDGERNAME>${xmlEscape(cgstLedger)}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <AMOUNT>${invoice.totalCgst.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
@@ -1499,7 +1526,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     if (invoice.totalSgst > 0) {
       taxEntriesXML += `
         <LEDGERENTRIES.LIST>
-            <LEDGERNAME>Output SGST</LEDGERNAME>
+            <LEDGERNAME>${xmlEscape(sgstLedger)}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
             <AMOUNT>${invoice.totalSgst.toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
@@ -1507,14 +1534,18 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
   }
 
   let roundOffXML = '';
-  if (invoice.roundOff !== 0) {
+  if (invoice.roundOff && Math.abs(invoice.roundOff) >= 0.01) {
+    const isCredit = invoice.roundOff > 0;
     roundOffXML = `
         <LEDGERENTRIES.LIST>
-            <LEDGERNAME>Round Off</LEDGERNAME>
-            <ISDEEMEDPOSITIVE>${invoice.roundOff > 0 ? 'No' : 'Yes'}</ISDEEMEDPOSITIVE>
-            <AMOUNT>${(-invoice.roundOff).toFixed(2)}</AMOUNT>
+            <LEDGERNAME>${xmlEscape(roundOffLedger)}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>${isCredit ? 'No' : 'Yes'}</ISDEEMEDPOSITIVE>
+            <AMOUNT>${Math.abs(invoice.roundOff).toFixed(2)}</AMOUNT>
         </LEDGERENTRIES.LIST>`;
   }
+
+  const targetCo = (companyName || config.companyName || invoice.sellerName || '').trim();
+  const companyTag = targetCo ? `<SVCURRENTCOMPANY>${xmlEscape(targetCo)}</SVCURRENTCOMPANY>` : '';
 
   return `<ENVELOPE>
     <HEADER>
@@ -1526,16 +1557,16 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
     <BODY>
         <DESC>
             <STATICVARIABLES>
-                <SVCURRENTCOMPANY>${xmlEscape(companyName)}</SVCURRENTCOMPANY>
+                ${companyTag}
             </STATICVARIABLES>
         </DESC>
         <DATA>
             <TALLYMESSAGE xmlns:UDF="TallyUDF">
-                <VOUCHER VCHTYPE="Portal" ACTION="Create" OBJVIEW="Invoice Voucher View">
+                <VOUCHER VCHTYPE="${xmlEscape(voucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
                     <DATE>${voucherDate}</DATE>
                     <EFFECTIVEDATE>${voucherDate}</EFFECTIVEDATE>
-                    <VOUCHERTYPENAME>Portal</VOUCHERTYPENAME>
-                    <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
+                    <VOUCHERTYPENAME>${xmlEscape(voucherType)}</VOUCHERTYPENAME>
+                    <VCHENTRYMODE>${hasItems ? 'Item Invoice' : 'Accounting Invoice'}</VCHENTRYMODE>
                     <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
                     <OBJVIEW>Invoice Voucher View</OBJVIEW>
                     <VOUCHERNUMBER>${xmlEscape(invoice.invoiceNo)}</VOUCHERNUMBER>
@@ -1562,6 +1593,7 @@ export function generateTallySalesVoucherXML(invoice: Invoice, companyName = '')
                     </LEDGERENTRIES.LIST>
 
                     ${inventoryEntriesXML}
+                    ${serviceSalesLedgerXML}
                     ${additionalExpensesXML}
                     ${taxEntriesXML}
                     ${roundOffXML}
@@ -1767,17 +1799,21 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
   const voucherBlocks = clean.match(/<VOUCHER\b[\s\S]*?<\/VOUCHER>/gi) || [];
 
   voucherBlocks.forEach((block, idx) => {
+    // Check if cancelled or optional
+    const isCancelled = /<(?:ISCANCELLED)[^>]*>\s*(?:Yes|1|True)\s*<\/(?:ISCANCELLED)>/i.test(block);
+    const isOptional = /<(?:ISOPTIONAL)[^>]*>\s*(?:Yes|1|True)\s*<\/(?:ISOPTIONAL)>/i.test(block);
+    if (isCancelled || isOptional) return;
+
     const vchTypeMatch = block.match(/<(?:VOUCHERTYPENAME|VCHTYPE)[^>]*>([^<]+)<\/(?:VOUCHERTYPENAME|VCHTYPE)>/i) ||
       block.match(/VCHTYPE="([^"]+)"/i);
     const vchType = vchTypeMatch ? vchTypeMatch[1].trim() : 'Sales';
 
-    // Extract invoice number and date. Never synthesize fake TALLY-INV-N records.
+    // Extract invoice number and date
     const noMatch = block.match(/<(?:VOUCHERNUMBER|REFERENCE|VCHNO)>([^<]+)<\/(?:VOUCHERNUMBER|REFERENCE|VCHNO)>/i);
     const invoiceNo = noMatch ? noMatch[1].trim() : '';
-    const dateMatch = block.match(/<DATE>([^<]+)<\/DATE>/i);
+    const dateMatch = block.match(/<(?:DATE|EFFECTIVEDATE)>([^<]+)<\/(?:DATE|EFFECTIVEDATE)>/i);
     const invoiceDate = formatTallyDateToIso(dateMatch ? dateMatch[1].trim() : '');
     if (!invoiceNo || !invoiceDate) return;
-
 
     // Party Name
     const partyMatch = block.match(/<(?:PARTYLEDGERNAME|PARTYNAME|BASICBUYERNAME)>([^<]+)<\/(?:PARTYLEDGERNAME|PARTYNAME|BASICBUYERNAME)>/i);
@@ -1790,25 +1826,85 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
     // State
     const stateMatch = block.match(/<(?:STATENAME|PLACEOFSUPPLY|STATE)>([^<]+)<\/(?:STATENAME|PLACEOFSUPPLY|STATE)>/i);
     const partyState = stateMatch ? stateMatch[1].trim() : sellerInfo?.state || 'Delhi';
-    const partyStateCode = partyGstin ? extractStateCodeFromGstin(partyGstin) : (getStateCodeByName(partyState) || '07');
+    const partyStateCode = partyGstin ? extractStateCodeFromGstin(partyGstin) : (getStateCodeByName(partyState) || sellerInfo?.stateCode || '07');
 
     // Address
     const addrMatches = block.match(/<(?:ADDRESS|BASICBUYERADDRESS)>([^<]+)<\/(?:ADDRESS|BASICBUYERADDRESS)>/gi) || [];
     const address = addrMatches.map(m => m.replace(/<[^>]+>/g, '').trim()).filter(Boolean).join(', ');
+    const pinMatch = block.match(/<PINCODE>([^<]+)<\/PINCODE>/i);
+    const pinCode = pinMatch ? pinMatch[1].trim() : (address.match(/\b\d{6}\b/)?.[0] || '');
 
     // Narration / Notes
     const narrMatch = block.match(/<NARRATION>([^<]+)<\/NARRATION>/i);
     const notes = narrMatch ? narrMatch[1].trim() : '';
 
+    // Mobile
+    const mobileMatch = block.match(/<(?:MOBILENUMBER|LEDGERMOBILE|PHONE|LEDGERPHONE)>([^<]+)<\/(?:MOBILENUMBER|LEDGERMOBILE|PHONE|LEDGERPHONE)>/i);
+    const mobile = mobileMatch ? mobileMatch[1].trim() : '';
+
     // GUID & MasterID
     const guidMatch = block.match(/<GUID>([^<]+)<\/GUID>/i);
     const tallyGuid = guidMatch ? guidMatch[1].trim() : '';
-
     const masterIdMatch = block.match(/<MASTERID>([^<]+)<\/MASTERID>/i);
     const tallyMasterId = masterIdMatch ? masterIdMatch[1].trim() : '';
 
+    // Extract Ledger entries for actual tax, expenses and grand totals
+    const ledgerBlocks = block.match(/<LEDGERENTRIES\.LIST[\s\S]*?<\/LEDGERENTRIES\.LIST>/gi) || [];
+    let partyAmount = 0;
+    let ledgerCgst = 0;
+    let ledgerSgst = 0;
+    let ledgerIgst = 0;
+    let ledgerCess = 0;
+    let ledgerFreight = 0;
+    let ledgerLabour = 0;
+    let ledgerOtherExpense = 0;
+    let ledgerRoundOff = 0;
+    let serviceSalesTaxable = 0;
+    let serviceSalesName = '';
+
+    ledgerBlocks.forEach((lBlock) => {
+      const lNameMatch = lBlock.match(/<LEDGERNAME>([^<]+)<\/LEDGERNAME>/i);
+      const lAmtMatch = lBlock.match(/<AMOUNT>([^<]+)<\/AMOUNT>/i);
+      if (!lNameMatch || !lAmtMatch) return;
+
+      const lName = lNameMatch[1].trim();
+      const lAmt = parseFloat(lAmtMatch[1]) || 0;
+      const isParty = /<ISPARTYLEDGER>\s*(?:Yes|1|True)\s*<\/ISPARTYLEDGER>/i.test(lBlock) ||
+        (partyName && lName.toLowerCase() === partyName.toLowerCase());
+
+      if (isParty) {
+        partyAmount = Math.abs(lAmt);
+      } else {
+        const lower = lName.toLowerCase();
+        if (/cgst|central\s*tax|central\s*gst/i.test(lower)) {
+          ledgerCgst += Math.abs(lAmt);
+        } else if (/sgst|utgst|state\s*tax|state\s*gst/i.test(lower)) {
+          ledgerSgst += Math.abs(lAmt);
+        } else if (/igst|integrated\s*tax|integrated\s*gst/i.test(lower)) {
+          ledgerIgst += Math.abs(lAmt);
+        } else if (/cess/i.test(lower)) {
+          ledgerCess += Math.abs(lAmt);
+        } else if (/freight|forwarding|cartage|transport|delivery/i.test(lower)) {
+          ledgerFreight += Math.abs(lAmt);
+        } else if (/labour|labor|loading|unloading|handling|hamali/i.test(lower)) {
+          ledgerLabour += Math.abs(lAmt);
+        } else if (/round\s*off|roundoff/i.test(lower)) {
+          ledgerRoundOff += lAmt;
+        } else if (/insurance|packing|other\s*charge/i.test(lower)) {
+          ledgerOtherExpense += Math.abs(lAmt);
+        } else if (lAmt < 0) {
+          serviceSalesTaxable += Math.abs(lAmt);
+          if (!serviceSalesName) serviceSalesName = lName;
+        }
+      }
+    });
+
+    const hasLedgerTaxes = (ledgerCgst + ledgerSgst + ledgerIgst + ledgerCess) > 0;
+    const sellerStateStr = (sellerInfo?.state || 'Delhi').toLowerCase();
+    const isInterState = partyState.toLowerCase() !== sellerStateStr || ledgerIgst > 0;
+
     // Inventory items
-    const invEntries = block.match(/<ALLINVENTORYENTRIES\.LIST[\s\S]*?<\/ALLINVENTORYENTRIES\.LIST>/gi) || [];
+    const invEntries = block.match(/<(?:ALLINVENTORYENTRIES|INVENTORYENTRIES)\.LIST[\s\S]*?<\/(?:ALLINVENTORYENTRIES|INVENTORYENTRIES)\.LIST>/gi) || [];
     const items: InvoiceItemRow[] = [];
 
     invEntries.forEach((itemBlock, itemIdx) => {
@@ -1820,117 +1916,135 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       let unit = 'Nos';
       if (rateMatch) {
         const rateParts = rateMatch[1].split('/');
-        rate = Math.abs(parseFloat(rateParts[0])) || 0;
+        rate = Math.abs(parseFloat(rateParts[0].replace(/,/g, ''))) || 0;
         if (rateParts[1]) unit = rateParts[1].trim();
       }
 
       const qtyMatch = itemBlock.match(/<(?:BILLEDQTY|ACTUALQTY)>([^<]+)<\/(?:BILLEDQTY|ACTUALQTY)>/i);
       let qty = 1;
       if (qtyMatch) {
-        const qm = qtyMatch[1].match(/^([\d.]+)\s*(.*)$/);
+        const qm = qtyMatch[1].trim().match(/^(-?[\d,]+(?:\.\d+)?)\s*(.*)$/);
         if (qm) {
-          qty = parseFloat(qm[1]) || 1;
+          const parsedQ = Math.abs(parseFloat(qm[1].replace(/,/g, '')));
+          if (parsedQ) qty = parsedQ;
           if (qm[2] && !unit) unit = qm[2].trim();
         }
       }
 
       const amtMatch = itemBlock.match(/<AMOUNT>([^<]+)<\/AMOUNT>/i);
-      const amount = amtMatch ? Math.abs(parseFloat(amtMatch[1])) || 0 : (rate * qty);
+      const taxable = amtMatch ? Math.abs(parseFloat(amtMatch[1])) || 0 : +(rate * qty).toFixed(2);
+      if (!rate && qty > 0 && taxable > 0) rate = +(taxable / qty).toFixed(2);
 
-      // Default 18% standard GST if not extracted
-      // Use GST rate and HSN from the voucher's item-level Tally metadata.
-      const rateDetailsText = itemBlock.match(/<RATEDETAILS\.LIST[\s\S]*?<\/RATEDETAILS\.LIST>/gi) || [];
-      const rateValues = rateDetailsText.flatMap(detail => {
-        const match = detail.match(/<GSTRATE[^>]*>([^<]+)<\/GSTRATE>/i);
-        const value = match ? Number(match[1]) : 0;
-        return Number.isFinite(value) && value > 0 ? [value] : [];
-      });
-      const gstRate = rateValues.length ? Math.max(...rateValues) : 18;
+      // Check item GST rate
+      const explicitRateMatch = itemBlock.match(/<(?:GSTOVRDIGSTRATE|GSTRATE|RATEOFVATTAX)[^>]*>([^<]+)<\/(?:GSTOVRDIGSTRATE|GSTRATE|RATEOFVATTAX)>/i);
+      let itemGstRate = explicitRateMatch ? parseFloat(explicitRateMatch[1]) : 0;
+      if (!itemGstRate || !Number.isFinite(itemGstRate)) itemGstRate = 0;
+
       const hsnMatch = itemBlock.match(/<(?:GSTHSNNAME|HSNSACCODE|HSNCODE|HSN)[^>]*>([^<]+)<\/(?:GSTHSNNAME|HSNSACCODE|HSNCODE|HSN)>/i);
       const hsn = hsnMatch ? hsnMatch[1].trim() : '';
-      const isInter = partyState.toLowerCase() !== (sellerInfo?.state || 'Delhi').toLowerCase();
-      const cgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
-      const sgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
-      const igst = isInter ? (amount * gstRate) / 100 : 0;
-      const total = amount + cgst + sgst + igst;
 
-      const itemRow: InvoiceItemRow = {
+      items.push({
         id: `row-tally-${idx + 1}-${itemIdx + 1}`,
         name,
         hsn,
         qty,
         unit: unit || 'Nos',
-        rate: rate || (qty > 0 ? amount / qty : 0),
+        rate,
         discountPercent: 0,
-        gstRate,
-        taxableAmount: amount,
-        cgstAmount: cgst,
-        sgstAmount: sgst,
-        igstAmount: igst,
-        totalAmount: total,
-      };
+        gstRate: itemGstRate,
+        taxableAmount: taxable,
+        cgstAmount: 0,
+        sgstAmount: 0,
+        igstAmount: 0,
+        totalAmount: taxable,
+      });
 
-      items.push(itemRow);
-
-      // Auto-extract item master
       extractedItems.push({
         id: `item-auto-${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
         name,
         hsn,
-        gst: gstRate,
+        gst: itemGstRate,
         unit: unit || 'Nos',
         rate: rate || 0,
       });
     });
 
-    // If no inventory entries (e.g. accounting voucher), extract from ledger entries
+    // If no inventory entries, use accounting ledger entry
     if (items.length === 0) {
-      const ledgerEntries = block.match(/<LEDGERENTRIES\.LIST[\s\S]*?<\/LEDGERENTRIES\.LIST>/gi) || [];
-      let primaryAmount = 0;
-
-      ledgerEntries.forEach((lBlock) => {
-        const lNameMatch = lBlock.match(/<LEDGERNAME>([^<]+)<\/LEDGERNAME>/i);
-        const lAmtMatch = lBlock.match(/<AMOUNT>([^<]+)<\/AMOUNT>/i);
-        if (lNameMatch && lAmtMatch) {
-          const lName = lNameMatch[1].trim();
-          const lAmt = parseFloat(lAmtMatch[1]);
-          // Sales account or non-party credit
-          if (!lName.toLowerCase().includes('gst') && lAmt < 0) {
-            primaryAmount += Math.abs(lAmt);
-          }
-        }
-      });
-
-      if (primaryAmount === 0) {
+      let serviceTaxable = serviceSalesTaxable;
+      if (!serviceTaxable) {
         const anyAmtMatch = block.match(/<AMOUNT>([^<]+)<\/AMOUNT>/i);
-        primaryAmount = anyAmtMatch ? Math.abs(parseFloat(anyAmtMatch[1])) : 1000;
+        const voucherAmt = anyAmtMatch ? Math.abs(parseFloat(anyAmtMatch[1])) : 0;
+        const totalTaxSum = ledgerCgst + ledgerSgst + ledgerIgst + ledgerCess;
+        serviceTaxable = partyAmount > 0
+          ? Math.max(0, partyAmount - totalTaxSum - ledgerFreight - ledgerLabour - ledgerOtherExpense)
+          : (voucherAmt ? Math.max(0, voucherAmt - totalTaxSum) : 0);
       }
 
-      items.push({
-        id: `row-tally-${idx + 1}-1`,
-        name: 'Sales / Professional Services',
-        hsn: '998313',
-        qty: 1,
-        unit: 'Nos',
-        rate: primaryAmount,
-        discountPercent: 0,
-        gstRate: 18,
-        taxableAmount: primaryAmount,
-        cgstAmount: primaryAmount * 0.09,
-        sgstAmount: primaryAmount * 0.09,
-        igstAmount: 0,
-        totalAmount: primaryAmount * 1.18,
+      if (serviceTaxable > 0 || partyAmount > 0) {
+        const finalTaxable = serviceTaxable || partyAmount;
+        items.push({
+          id: `row-tally-${idx + 1}-1`,
+          name: serviceSalesName || 'Sales / Professional Services',
+          hsn: '998313',
+          qty: 1,
+          unit: 'Nos',
+          rate: finalTaxable,
+          discountPercent: 0,
+          gstRate: 0,
+          taxableAmount: finalTaxable,
+          cgstAmount: 0,
+          sgstAmount: 0,
+          igstAmount: 0,
+          totalAmount: finalTaxable,
+        });
+      }
+    }
+
+    if (items.length === 0) return;
+
+    const subtotalTaxable = items.reduce((sum, it) => sum + it.taxableAmount, 0);
+
+    // Compute or distribute taxes
+    if (hasLedgerTaxes && subtotalTaxable > 0) {
+      items.forEach((item) => {
+        const share = item.taxableAmount / subtotalTaxable;
+        item.cgstAmount = Number((ledgerCgst * share).toFixed(2));
+        item.sgstAmount = Number((ledgerSgst * share).toFixed(2));
+        item.igstAmount = Number((ledgerIgst * share).toFixed(2));
+        const itemTax = item.cgstAmount + item.sgstAmount + item.igstAmount;
+        if (!item.gstRate && item.taxableAmount > 0) {
+          const calcRate = +((itemTax / item.taxableAmount) * 100).toFixed(2);
+          item.gstRate = Math.abs(calcRate - 18) <= 0.6 ? 18 : Math.abs(calcRate - 12) <= 0.6 ? 12 : Math.abs(calcRate - 5) <= 0.6 ? 5 : Math.abs(calcRate - 28) <= 0.6 ? 28 : calcRate;
+        }
+        item.totalAmount = +(item.taxableAmount + itemTax).toFixed(2);
+      });
+    } else {
+      items.forEach((item) => {
+        const rate = item.gstRate || 0;
+        item.cgstAmount = !isInterState && rate ? Number((item.taxableAmount * (rate / 200)).toFixed(2)) : 0;
+        item.sgstAmount = !isInterState && rate ? Number((item.taxableAmount * (rate / 200)).toFixed(2)) : 0;
+        item.igstAmount = isInterState && rate ? Number((item.taxableAmount * (rate / 100)).toFixed(2)) : 0;
+        item.totalAmount = +(item.taxableAmount + item.cgstAmount + item.sgstAmount + item.igstAmount).toFixed(2);
       });
     }
 
-    // Auto-extract Party
+    const totalCgst = hasLedgerTaxes ? ledgerCgst : items.reduce((s, it) => s + it.cgstAmount, 0);
+    const totalSgst = hasLedgerTaxes ? ledgerSgst : items.reduce((s, it) => s + it.sgstAmount, 0);
+    const totalIgst = hasLedgerTaxes ? ledgerIgst : items.reduce((s, it) => s + it.igstAmount, 0);
+    const totalTax = totalCgst + totalSgst + totalIgst + ledgerCess;
+
+    const calculatedTotal = subtotalTaxable + totalTax + ledgerFreight + ledgerLabour + ledgerOtherExpense + ledgerRoundOff;
+    const grandTotal = partyAmount > 0 ? partyAmount : Math.round(calculatedTotal);
+    const roundOff = ledgerRoundOff !== 0 ? ledgerRoundOff : +(grandTotal - calculatedTotal).toFixed(2);
+
     if (partyName && partyName !== 'Cash Customer') {
       extractedParties.push({
         id: `party-auto-${partyName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
         name: partyName,
         address: address || '',
-        pin: partyGstin ? '' : '110001',
-        mobile: '',
+        pin: pinCode || '110001',
+        mobile,
         gstin: partyGstin,
         state: partyState,
         state_code: partyStateCode,
@@ -1941,26 +2055,16 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       });
     }
 
-    const isInterState = partyState.toLowerCase() !== (sellerInfo?.state || 'Delhi').toLowerCase();
-    const subtotalTaxable = items.reduce((acc, it) => acc + it.taxableAmount, 0);
-    const totalCgst = items.reduce((acc, it) => acc + it.cgstAmount, 0);
-    const totalSgst = items.reduce((acc, it) => acc + it.sgstAmount, 0);
-    const totalIgst = items.reduce((acc, it) => acc + it.igstAmount, 0);
-    const totalTax = totalCgst + totalSgst + totalIgst;
-    const rawTotal = subtotalTaxable + totalTax;
-    const grandTotal = Math.round(rawTotal);
-    const roundOff = +(grandTotal - rawTotal).toFixed(2);
-
     parsedInvoices.push({
       id: `inv-tally-${idx + 1}-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}`,
       invoiceNo,
       invoiceDate,
       partyName,
       gstin: partyGstin,
-      mobile: '',
+      mobile,
       partyState,
       stateCode: partyStateCode,
-      pinCode: '',
+      pinCode,
       city: partyState,
       completeAddress: address,
       pan: partyGstin ? extractPanFromGstin(partyGstin) : '',
@@ -1978,6 +2082,9 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       totalSgst,
       totalIgst,
       totalTax,
+      freightAmount: ledgerFreight,
+      labourAmount: ledgerLabour,
+      otherExpenseAmount: ledgerOtherExpense,
       roundOff,
       grandTotal,
       amountInWords: numberToIndianWords(grandTotal),
@@ -2030,17 +2137,18 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
   const extractedItems: StockItem[] = [];
 
   voucherElements.forEach((vch, index) => {
+    // Skip cancelled and optional vouchers
+    const isCancelled = /^(yes|1|true)$/i.test(getNodeValue(vch, 'ISCANCELLED'));
+    const isOptional = /^(yes|1|true)$/i.test(getNodeValue(vch, 'ISOPTIONAL'));
+    if (isCancelled || isOptional) return;
+
     const vchType = getAttributeOrNode(vch, 'VCHTYPE', 'VOUCHERTYPENAME') || 'Sales';
     
     // Extract invoice number
     const invoiceNo = getNodeValue(vch, 'VOUCHERNUMBER') || getNodeValue(vch, 'REFERENCE');
-
-    // Never fabricate invoice numbers/dates for incomplete Tally voucher shells.
-    // This previously created fake TALLY-INV-N bills with a default ₹1,000 taxable amount.
-    const rawDate = getNodeValue(vch, 'DATE');
+    const rawDate = getNodeValue(vch, 'DATE') || getNodeValue(vch, 'EFFECTIVEDATE');
     const invoiceDate = formatTallyDateToIso(rawDate);
     if (!invoiceNo.trim() || !invoiceDate) {
-      console.warn('Skipping incomplete Tally voucher response: missing invoice number or date.');
       return;
     }
 
@@ -2048,7 +2156,7 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
     const partyName = getNodeValue(vch, 'PARTYLEDGERNAME') || getNodeValue(vch, 'PARTYNAME') || getNodeValue(vch, 'BASICBUYERNAME') || 'Cash Customer';
     const partyGstin = (getNodeValue(vch, 'PARTYGSTIN') || getNodeValue(vch, 'GSTIN')).toUpperCase();
     const partyState = getNodeValue(vch, 'STATENAME') || getNodeValue(vch, 'PLACEOFSUPPLY') || sellerInfo?.state || 'Delhi';
-    const stateCode = partyGstin ? extractStateCodeFromGstin(partyGstin) : (getStateCodeByName(partyState) || '07');
+    const stateCode = partyGstin ? extractStateCodeFromGstin(partyGstin) : (getStateCodeByName(partyState) || sellerInfo?.stateCode || '07');
     
     // Address
     const addressNodes = vch.getElementsByTagName('ADDRESS');
@@ -2063,14 +2171,65 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
     } else {
       address = getNodeValue(vch, 'BASICBUYERADDRESS') || getNodeValue(vch, 'ADDRESS');
     }
+    const pinCode = getNodeValue(vch, 'PINCODE') || (address.match(/\b\d{6}\b/)?.[0] || '');
+    const mobile = getNodeValue(vch, 'MOBILENUMBER') || getNodeValue(vch, 'LEDGERMOBILE') || getNodeValue(vch, 'PHONE') || '';
 
     const narration = getNodeValue(vch, 'NARRATION');
     const tallyGuid = getNodeValue(vch, 'GUID');
     const tallyMasterId = getNodeValue(vch, 'MASTERID');
 
+    // Extract Ledger entries for actual tax, expenses and grand totals
+    const ledgerNodes = Array.from(vch.getElementsByTagName('LEDGERENTRIES.LIST'));
+    let partyAmount = 0;
+    let ledgerCgst = 0;
+    let ledgerSgst = 0;
+    let ledgerIgst = 0;
+    let ledgerCess = 0;
+    let ledgerFreight = 0;
+    let ledgerLabour = 0;
+    let ledgerOtherExpense = 0;
+    let ledgerRoundOff = 0;
+    let serviceSalesTaxable = 0;
+    let serviceSalesName = '';
+
+    ledgerNodes.forEach((lNode) => {
+      const lName = getNodeValue(lNode, 'LEDGERNAME');
+      const lAmt = parseFloat(getNodeValue(lNode, 'AMOUNT') || '0') || 0;
+      const isParty = getNodeValue(lNode, 'ISPARTYLEDGER').toLowerCase() === 'yes' ||
+        (partyName && lName.toLowerCase() === partyName.toLowerCase());
+
+      if (isParty) {
+        partyAmount = Math.abs(lAmt);
+      } else {
+        const lower = lName.toLowerCase();
+        if (/cgst|central\s*tax|central\s*gst/i.test(lower)) {
+          ledgerCgst += Math.abs(lAmt);
+        } else if (/sgst|utgst|state\s*tax|state\s*gst/i.test(lower)) {
+          ledgerSgst += Math.abs(lAmt);
+        } else if (/igst|integrated\s*tax|integrated\s*gst/i.test(lower)) {
+          ledgerIgst += Math.abs(lAmt);
+        } else if (/cess/i.test(lower)) {
+          ledgerCess += Math.abs(lAmt);
+        } else if (/freight|forwarding|cartage|transport|delivery/i.test(lower)) {
+          ledgerFreight += Math.abs(lAmt);
+        } else if (/labour|labor|loading|unloading|handling|hamali/i.test(lower)) {
+          ledgerLabour += Math.abs(lAmt);
+        } else if (/round\s*off|roundoff/i.test(lower)) {
+          ledgerRoundOff += lAmt;
+        } else if (/insurance|packing|other\s*charge/i.test(lower)) {
+          ledgerOtherExpense += Math.abs(lAmt);
+        } else if (lAmt < 0) {
+          serviceSalesTaxable += Math.abs(lAmt);
+          if (!serviceSalesName) serviceSalesName = lName;
+        }
+      }
+    });
+
+    const hasLedgerTaxes = (ledgerCgst + ledgerSgst + ledgerIgst + ledgerCess) > 0;
+    const sellerStateStr = (sellerInfo?.state || 'Delhi').toLowerCase();
+    const isInterState = partyState.toLowerCase() !== sellerStateStr || ledgerIgst > 0;
+
     // Extract Inventory Items
-    // Tally Prime may emit inventory lines under either collection name
-    // depending on the report/view used for export.
     const inventoryNodes = [
       ...Array.from(vch.getElementsByTagName('ALLINVENTORYENTRIES.LIST')),
       ...Array.from(vch.getElementsByTagName('INVENTORYENTRIES.LIST')),
@@ -2085,19 +2244,15 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
       let qty = 1;
       let unit = 'Nos';
       if (rawQty) {
-        // Tally may return quantity as "2 Nos", "2.000 PCS" or with extra
-        // formatting. Always preserve the numeric quantity and unit separately.
         const match = rawQty.trim().match(/^(-?[\d,]+(?:\.\d+)?)\s*(.*)$/);
         if (match) {
-          const parsedQty = Number(match[1].replace(/,/g, ''));
-          if (Number.isFinite(parsedQty) && parsedQty !== 0) qty = Math.abs(parsedQty);
+          const parsedQty = Math.abs(Number(match[1].replace(/,/g, '')));
+          if (Number.isFinite(parsedQty) && parsedQty !== 0) qty = parsedQty;
           if (match[2]?.trim()) unit = match[2].trim();
         }
       }
 
-      // Parse Rate. Tally can return values such as "500/Nos", "500.00 / PCS"
-      // or currency-formatted text. Do not let parseFloat() turn a formatted rate
-      // into zero; the invoice must retain the actual Qty + Rate from Tally.
+      // Parse Rate
       const rawRate = getNodeValue(invNode, 'RATE');
       let rate = 0;
       if (rawRate) {
@@ -2110,93 +2265,119 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
         if (rParts[1]?.trim()) unit = rParts[1].trim();
       }
 
-      // Some Tally exports expose the rate through RATEOFVATTAX or another
-      // numeric child while RATE is empty. Never lose the rate when the amount
-      // and quantity are available.
-      if (!rate && qty > 0) {
-        const fallbackAmount = Math.abs(Number(getNodeValue(invNode, 'AMOUNT')) || 0);
-        if (fallbackAmount > 0) rate = +(fallbackAmount / qty).toFixed(2);
-      }
-
-      // Parse Amount (Credit in sales is negative in Tally XML)
       const rawAmt = getNodeValue(invNode, 'AMOUNT');
-      const amount = rawAmt ? Math.abs(parseFloat(rawAmt)) : (rate * qty);
+      const amount = rawAmt ? Math.abs(parseFloat(rawAmt)) : +(rate * qty).toFixed(2);
+      if (!rate && qty > 0 && amount > 0) rate = +(amount / qty).toFixed(2);
 
-      const gstRate = 18;
-      const isInter = partyState.toLowerCase() !== (sellerInfo?.state || 'Delhi').toLowerCase();
-      const cgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
-      const sgst = isInter ? 0 : (amount * (gstRate / 2)) / 100;
-      const igst = isInter ? (amount * gstRate) / 100 : 0;
-      const total = amount + cgst + sgst + igst;
+      // Check item GST rate
+      const explicitRateStr = getNodeValue(invNode, 'GSTOVRDIGSTRATE') || getNodeValue(invNode, 'GSTRATE') || getNodeValue(invNode, 'RATEOFVATTAX');
+      let itemGstRate = explicitRateStr ? parseFloat(explicitRateStr) : 0;
+      if (!itemGstRate || !Number.isFinite(itemGstRate)) itemGstRate = 0;
+
+      const hsn = getNodeValue(invNode, 'HSNSACCODE') || getNodeValue(invNode, 'HSNCODE') || getNodeValue(invNode, 'HSN') || getNodeValue(invNode, 'GSTHSNNAME') || '';
 
       items.push({
         id: `row-tally-${index + 1}-${itemIndex + 1}`,
         name: itemName,
-        hsn: '84713010',
+        hsn,
         qty,
         unit: unit || 'Nos',
-        rate: rate || (qty > 0 ? +(amount / qty).toFixed(2) : 0),
+        rate,
         discountPercent: 0,
-        gstRate,
+        gstRate: itemGstRate,
         taxableAmount: amount,
-        cgstAmount: cgst,
-        sgstAmount: sgst,
-        igstAmount: igst,
-        totalAmount: total,
+        cgstAmount: 0,
+        sgstAmount: 0,
+        igstAmount: 0,
+        totalAmount: amount,
       });
 
       extractedItems.push({
         id: `item-auto-${itemName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
         name: itemName,
-        hsn: '84713010',
-        gst: gstRate,
+        hsn,
+        gst: itemGstRate,
         unit: unit || 'Nos',
         rate: rate || 0,
       });
     });
 
-    // If no inventory entries, check ledger allocations
+    // If no inventory entries, check service sales ledger
     if (items.length === 0) {
-      const ledgerNodes = Array.from(vch.getElementsByTagName('LEDGERENTRIES.LIST'));
-      let primaryAmt = 0;
-      ledgerNodes.forEach(lNode => {
-        const lName = getNodeValue(lNode, 'LEDGERNAME');
-        const lAmtStr = getNodeValue(lNode, 'AMOUNT');
-        if (lAmtStr && !lName.toLowerCase().includes('gst')) {
-          const lAmt = parseFloat(lAmtStr);
-          if (lAmt < 0) primaryAmt += Math.abs(lAmt);
-        }
-      });
-
-      if (primaryAmt === 0) {
+      let serviceTaxable = serviceSalesTaxable;
+      if (!serviceTaxable) {
         const anyAmt = getNodeValue(vch, 'AMOUNT');
-        primaryAmt = anyAmt ? Math.abs(parseFloat(anyAmt)) : 0;
+        const voucherAmt = anyAmt ? Math.abs(parseFloat(anyAmt)) : 0;
+        const totalTaxSum = ledgerCgst + ledgerSgst + ledgerIgst + ledgerCess;
+        serviceTaxable = partyAmount > 0
+          ? Math.max(0, partyAmount - totalTaxSum - ledgerFreight - ledgerLabour - ledgerOtherExpense)
+          : (voucherAmt ? Math.max(0, voucherAmt - totalTaxSum) : 0);
       }
 
-      items.push({
-        id: `row-tally-${index + 1}-1`,
-        name: 'Sales / Services Provided',
-        hsn: '998313',
-        qty: 1,
-        unit: 'Nos',
-        rate: primaryAmt,
-        discountPercent: 0,
-        gstRate: 18,
-        taxableAmount: primaryAmt,
-        cgstAmount: primaryAmt * 0.09,
-        sgstAmount: primaryAmt * 0.09,
-        igstAmount: 0,
-        totalAmount: primaryAmt * 1.18,
+      if (serviceTaxable > 0 || partyAmount > 0) {
+        const finalTaxable = serviceTaxable || partyAmount;
+        items.push({
+          id: `row-tally-${index + 1}-1`,
+          name: serviceSalesName || 'Sales / Services Provided',
+          hsn: '998313',
+          qty: 1,
+          unit: 'Nos',
+          rate: finalTaxable,
+          discountPercent: 0,
+          gstRate: 0,
+          taxableAmount: finalTaxable,
+          cgstAmount: 0,
+          sgstAmount: 0,
+          igstAmount: 0,
+          totalAmount: finalTaxable,
+        });
+      }
+    }
+
+    if (items.length === 0) return;
+
+    const subtotalTaxable = items.reduce((acc, it) => acc + it.taxableAmount, 0);
+
+    // Compute or distribute taxes
+    if (hasLedgerTaxes && subtotalTaxable > 0) {
+      items.forEach((item) => {
+        const share = item.taxableAmount / subtotalTaxable;
+        item.cgstAmount = Number((ledgerCgst * share).toFixed(2));
+        item.sgstAmount = Number((ledgerSgst * share).toFixed(2));
+        item.igstAmount = Number((ledgerIgst * share).toFixed(2));
+        const itemTax = item.cgstAmount + item.sgstAmount + item.igstAmount;
+        if (!item.gstRate && item.taxableAmount > 0) {
+          const calcRate = +((itemTax / item.taxableAmount) * 100).toFixed(2);
+          item.gstRate = Math.abs(calcRate - 18) <= 0.6 ? 18 : Math.abs(calcRate - 12) <= 0.6 ? 12 : Math.abs(calcRate - 5) <= 0.6 ? 5 : Math.abs(calcRate - 28) <= 0.6 ? 28 : calcRate;
+        }
+        item.totalAmount = +(item.taxableAmount + itemTax).toFixed(2);
+      });
+    } else {
+      items.forEach((item) => {
+        const rate = item.gstRate || 0;
+        item.cgstAmount = !isInterState && rate ? Number((item.taxableAmount * (rate / 200)).toFixed(2)) : 0;
+        item.sgstAmount = !isInterState && rate ? Number((item.taxableAmount * (rate / 200)).toFixed(2)) : 0;
+        item.igstAmount = isInterState && rate ? Number((item.taxableAmount * (rate / 100)).toFixed(2)) : 0;
+        item.totalAmount = +(item.taxableAmount + item.cgstAmount + item.sgstAmount + item.igstAmount).toFixed(2);
       });
     }
+
+    const totalCgst = hasLedgerTaxes ? ledgerCgst : items.reduce((acc, it) => acc + it.cgstAmount, 0);
+    const totalSgst = hasLedgerTaxes ? ledgerSgst : items.reduce((acc, it) => acc + it.sgstAmount, 0);
+    const totalIgst = hasLedgerTaxes ? ledgerIgst : items.reduce((acc, it) => acc + it.igstAmount, 0);
+    const totalTax = totalCgst + totalSgst + totalIgst + ledgerCess;
+
+    const calculatedTotal = subtotalTaxable + totalTax + ledgerFreight + ledgerLabour + ledgerOtherExpense + ledgerRoundOff;
+    const grandTotal = partyAmount > 0 ? partyAmount : Math.round(calculatedTotal);
+    const roundOff = ledgerRoundOff !== 0 ? ledgerRoundOff : +(grandTotal - calculatedTotal).toFixed(2);
 
     if (partyName && partyName !== 'Cash Customer') {
       extractedParties.push({
         id: `party-auto-${partyName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
         name: partyName,
         address: address || '',
-        pin: '110001',
-        mobile: '',
+        pin: pinCode || '110001',
+        mobile,
         gstin: partyGstin,
         state: partyState,
         state_code: stateCode,
@@ -2207,26 +2388,16 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
       });
     }
 
-    const isInterState = partyState.toLowerCase() !== (sellerInfo?.state || 'Delhi').toLowerCase();
-    const subtotalTaxable = items.reduce((acc, it) => acc + it.taxableAmount, 0);
-    const totalCgst = items.reduce((acc, it) => acc + it.cgstAmount, 0);
-    const totalSgst = items.reduce((acc, it) => acc + it.sgstAmount, 0);
-    const totalIgst = items.reduce((acc, it) => acc + it.igstAmount, 0);
-    const totalTax = totalCgst + totalSgst + totalIgst;
-    const rawTotal = subtotalTaxable + totalTax;
-    const grandTotal = Math.round(rawTotal);
-    const roundOff = +(grandTotal - rawTotal).toFixed(2);
-
     invoices.push({
       id: `inv-tally-${index + 1}-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}`,
       invoiceNo,
       invoiceDate,
       partyName,
       gstin: partyGstin,
-      mobile: '',
+      mobile,
       partyState,
       stateCode,
-      pinCode: '',
+      pinCode,
       city: partyState,
       completeAddress: address,
       pan: partyGstin ? extractPanFromGstin(partyGstin) : '',
@@ -2244,6 +2415,9 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
       totalSgst,
       totalIgst,
       totalTax,
+      freightAmount: ledgerFreight,
+      labourAmount: ledgerLabour,
+      otherExpenseAmount: ledgerOtherExpense,
       roundOff,
       grandTotal,
       amountInWords: numberToIndianWords(grandTotal),
@@ -2253,7 +2427,7 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
       tallyGuid,
       tallyMasterId,
       tallyVoucherType: vchType,
-      source: 'tally_import',
+      source: vchType.trim().toLowerCase() === 'portal' ? 'portal' : 'tally_import',
       isDuplicateProtected: true,
       createdAt: new Date().toISOString(),
     });
@@ -2292,74 +2466,91 @@ export async function fetchSalesVouchersFromTally(
     const parsed = new Date(raw);
     return raw && !Number.isNaN(parsed.getTime()) ? new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()) : null;
   };
+
   const pad = (n: number) => String(n).padStart(2, '0');
   const ymd = (d: Date) => String(d.getFullYear()) + pad(d.getMonth() + 1) + pad(d.getDate());
   const iso = (d: Date) => String(d.getFullYear()) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+
   const selectedFrom = parseIsoDate(fromDate);
   const selectedTo = parseIsoDate(toDate);
   if ((fromDate || toDate) && (!selectedFrom || !selectedTo)) throw new Error('Invalid From Date/To Date. Please select valid dates.');
   if (selectedFrom && selectedTo && selectedFrom.getTime() > selectedTo.getTime()) throw new Error('From Date cannot be after To Date.');
 
   const fy = getCurrentFinancialYearRange();
-  const rangeFrom = selectedFrom || parseIsoDate(fy.start)!;
+  const companyBooksStart = parseIsoDate(sellerInfo?.booksBeginningFrom || sellerInfo?.financialYearFrom);
+  const rangeFrom = selectedFrom || companyBooksStart || parseIsoDate(fy.start) || new Date(new Date().getFullYear(), 3, 1);
   const rangeTo = selectedTo || new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-  if (rangeFrom.getTime() > rangeTo.getTime()) throw new Error('Invoice import start date is after end date.');
+  if (rangeFrom.getTime() > rangeTo.getTime()) {
+    rangeFrom.setTime(rangeTo.getTime());
+  }
 
-  // First try the lightweight native query; if it returns no valid invoices, retry
-  // with a date-bounded fallback that fetches invoice fields and inventory lines only.
-  const boundedSalesFallback = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesBoundedFallback</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName><SVCURRENTCOMPANY>__PORTAL_COMPANY__</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE="Formulae" NAME="PortalSalesInRange">$$And:$$IsSales:$VoucherTypeName:$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><COLLECTION NAME="PortalSalesInvoicesBoundedFallback" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalSalesInRange</FILTER><FETCH>GUID,MASTERID,DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,PARTYNAME,PARTYGSTIN,GSTIN,PLACEOFSUPPLY,STATENAME,BASICBUYERNAME,BASICBUYERADDRESS,NARRATION,AMOUNT</FETCH><FETCH>ALLINVENTORYENTRIES.STOCKITEMNAME,ALLINVENTORYENTRIES.BILLEDQTY,ALLINVENTORYENTRIES.ACTUALQTY,ALLINVENTORYENTRIES.RATE,ALLINVENTORYENTRIES.AMOUNT,ALLINVENTORYENTRIES.HSNSACCODE,ALLINVENTORYENTRIES.HSNCODE,ALLINVENTORYENTRIES.HSN</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
-  const baseQueries = [TALLY_XML_QUERIES.SALES_VOUCHERS_NATIVE, boundedSalesFallback];
+  const targetCompany = (sellerInfo?.name || config.companyName || '').trim();
+  const companyTag = targetCompany ? `<SVCURRENTCOMPANY>${xmlEscape(targetCompany)}</SVCURRENTCOMPANY>` : '';
+
+  // Primary Query: date-bounded with formula PortalSalesInRange
+  const boundedQuery = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>${companyTag}<SVFROMDATE TYPE="Date">__SVFROMDATE__</SVFROMDATE><SVTODATE TYPE="Date">__SVTODATE__</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.List</FETCH><FETCH>LedgerEntries.List</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesOnly">$$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalDateInRange">$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalSalesInRange">$$And:PortalIsSalesOnly:PortalDateInRange</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+
+  // Fallback Query: Standard collection if custom TDL formula isn't supported by this Tally build
+  const standardQuery = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>StandardSalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>${companyTag}<SVFROMDATE TYPE="Date">__SVFROMDATE__</SVFROMDATE><SVTODATE TYPE="Date">__SVTODATE__</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="StandardSalesVouchers" ISMODIFY="No"><TYPE>Voucher</TYPE><FILTER>IsSalesVoucherOnly</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.List</FETCH><FETCH>LedgerEntries.List</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsSalesVoucherOnly">$$IsSales:$VoucherTypeName</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+
   const invoiceMap = new Map<string, Invoice>();
   const parties = new Map<string, Party>();
   const items = new Map<string, StockItem>();
   let lastError: Error | null = null;
 
-  // Import in short sequential batches. If the lightweight custom TDL query is
-  // unsupported by this Tally build, fall back to the known HSFGPL collection queries.
+  // Import in safe sequential 30-day batches. Never Promise.all() to Tally.
   for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime();) {
     const batchEnd = new Date(cursor.getTime());
     batchEnd.setDate(batchEnd.getDate() + 30);
     if (batchEnd.getTime() > rangeTo.getTime()) batchEnd.setTime(rangeTo.getTime());
-    let batchInvoiceCount = 0;
 
-    for (const baseQuery of baseQueries) {
-      const queryWithCompany = baseQuery.includes('__PORTAL_COMPANY__')
-        ? baseQuery.replace('__PORTAL_COMPANY__', xmlEscape(sellerInfo?.name || config.companyName || ''))
-        : baseQuery.replace(
-            '<STATICVARIABLES>',
-            '<STATICVARIABLES><SVCURRENTCOMPANY>' + xmlEscape(sellerInfo?.name || config.companyName || '') + '</SVCURRENTCOMPANY>'
-          );
-      const xmlQuery = queryWithCompany.replace(
-        '<STATICVARIABLES>',
-        '<STATICVARIABLES><SVFROMDATE TYPE="Date">' + ymd(cursor) + '</SVFROMDATE><SVTODATE TYPE="Date">' + ymd(batchEnd) + '</SVTODATE>'
-      );
-      try {
-        const res = await sendTallyRequest(xmlQuery, config);
-        if (!res?.text?.trim()) continue;
-        const parsed = parseSalesVouchersXML(res.text, sellerInfo);
-        const before = batchInvoiceCount;
-        let acceptedFromThisQuery = 0;
-        for (const invoice of parsed.invoices) {
-          const date = String(invoice.invoiceDate || '').slice(0, 10);
-          // Some Tally reports ignore SVFROMDATE/SVTODATE. Do not let an
-          // out-of-range voucher stop the fallback queries for this batch.
-          if (!date || date < iso(cursor) || date > iso(batchEnd)) continue;
-          const key = date + '|' + String(invoice.invoiceNo || '').trim().toLowerCase() + '|' +
-            String(invoice.tallyGuid || invoice.tallyMasterId || invoice.sellerGstin || '').trim().toLowerCase();
-          invoiceMap.set(key, invoice);
-          acceptedFromThisQuery++;
-        }
-        batchInvoiceCount = Array.from(invoiceMap.values()).filter(inv => {
+    const fromYmd = ymd(cursor);
+    const toYmd = ymd(batchEnd);
+    const fromIso = iso(cursor);
+    const toIso = iso(batchEnd);
+
+    let batchSuccess = false;
+
+    // Try primary bounded query first
+    const q1 = boundedQuery.replace('__SVFROMDATE__', fromYmd).replace('__SVTODATE__', toYmd);
+    try {
+      const res1 = await sendTallyRequest(q1, config);
+      if (res1?.text?.trim()) {
+        const parsed = parseSalesVouchersXML(res1.text, sellerInfo);
+        for (const inv of parsed.invoices) {
           const d = String(inv.invoiceDate || '').slice(0, 10);
-          return d >= iso(cursor) && d <= iso(batchEnd);
-        }).length;
-        for (const party of parsed.extractedParties) parties.set(party.name.trim().toLowerCase(), party);
-        for (const item of parsed.extractedItems) items.set(item.name.trim().toLowerCase(), item);
-        // Continue to the next fallback query unless this query actually
-        // yielded an invoice inside the requested batch date range.
-        if (batchInvoiceCount > before || acceptedFromThisQuery > 0) break;
-      } catch (err: any) {
-        lastError = err instanceof Error ? err : new Error(String(err?.message || err));
+          if (d >= fromIso && d <= toIso) {
+            const key = (inv.invoiceNo || '').trim().toLowerCase() + '|' + d + '|' + (inv.tallyGuid || inv.tallyMasterId || '');
+            invoiceMap.set(key, inv);
+          }
+        }
+        for (const p of parsed.extractedParties) parties.set(p.name.trim().toLowerCase(), p);
+        for (const it of parsed.extractedItems) items.set(it.name.trim().toLowerCase(), it);
+        batchSuccess = true;
+      }
+    } catch (err: any) {
+      lastError = err instanceof Error ? err : new Error(String(err?.message || err));
+    }
+
+    // If primary query failed or threw an error, try standard fallback query
+    if (!batchSuccess) {
+      const q2 = standardQuery.replace('__SVFROMDATE__', fromYmd).replace('__SVTODATE__', toYmd);
+      try {
+        const res2 = await sendTallyRequest(q2, config);
+        if (res2?.text?.trim()) {
+          const parsed = parseSalesVouchersXML(res2.text, sellerInfo);
+          for (const inv of parsed.invoices) {
+            const d = String(inv.invoiceDate || '').slice(0, 10);
+            if (d >= fromIso && d <= toIso) {
+              const key = (inv.invoiceNo || '').trim().toLowerCase() + '|' + d + '|' + (inv.tallyGuid || inv.tallyMasterId || '');
+              invoiceMap.set(key, inv);
+            }
+          }
+          for (const p of parsed.extractedParties) parties.set(p.name.trim().toLowerCase(), p);
+          for (const it of parsed.extractedItems) items.set(it.name.trim().toLowerCase(), it);
+        }
+      } catch (err2: any) {
+        lastError = err2 instanceof Error ? err2 : new Error(String(err2?.message || err2));
       }
     }
 
@@ -2368,17 +2559,20 @@ export async function fetchSalesVouchersFromTally(
     if (cursor.getTime() <= rangeTo.getTime()) await new Promise(resolve => setTimeout(resolve, 150));
   }
 
-  if (invoiceMap.size > 0) return {
-    invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
-    extractedParties: Array.from(parties.values()),
-    extractedItems: Array.from(items.values()),
-  };
+  if (invoiceMap.size > 0) {
+    return {
+      invoices: Array.from(invoiceMap.values()).sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate)),
+      extractedParties: Array.from(parties.values()),
+      extractedItems: Array.from(items.values()),
+    };
+  }
+
   if (lastError) throw lastError;
   return { invoices: [], extractedParties: [], extractedItems: [] };
 }
 
 /**
- * Ensures Tally has a Voucher Type named "Portal" under the Sales parent.
+ * Ensures Tally has a Voucher Type named "Portal" under the Sales parent with Manual numbering.
  * This is a regular part of Portal -> Tally export, not an exception workflow.
  */
 export async function ensurePortalVoucherTypeInTally(
@@ -2402,7 +2596,7 @@ export async function ensurePortalVoucherTypeInTally(
     <BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>${xmlEscape(companyName || config.companyName || '')}</SVCURRENTCOMPANY></STATICVARIABLES></DESC>
       <DATA><TALLYMESSAGE xmlns:UDF="TallyUDF">
         <VOUCHERTYPE NAME="Portal" ACTION="Create">
-          <PARENT>Sales</PARENT><NUMBERINGMETHOD>Automatic</NUMBERINGMETHOD><ISOPTIONAL>No</ISOPTIONAL>
+          <PARENT>Sales</PARENT><NUMBERINGMETHOD>Manual</NUMBERINGMETHOD><ISOPTIONAL>No</ISOPTIONAL>
           <USEFORPOSINVOICE>No</USEFORPOSINVOICE><ALLOWZEROENTRIES>No</ALLOWZEROENTRIES>
         </VOUCHERTYPE>
       </TALLYMESSAGE></DATA>
@@ -2419,7 +2613,177 @@ export async function ensurePortalVoucherTypeInTally(
 }
 
 /**
- * Exports a single Invoice to Tally Prime with error parsing and confirmation
+ * Ensures all prerequisite masters (Units, Stock Items, Debtor Ledger, Sales & Tax Ledgers)
+ * exist in Tally Prime before posting the Sales Voucher.
+ * This prevents common Tally errors: "Ledger does not exist", "Stock Item does not exist".
+ */
+export async function ensureMastersForInvoice(
+  invoice: Invoice,
+  config: TallyConfig = DEFAULT_TALLY_CONFIG,
+  companyName = ''
+): Promise<{ success: boolean; message?: string }> {
+  const targetCompany = companyName || config.companyName || invoice.sellerName || '';
+
+  const salesLedger = invoice.salesLedger || config.salesLedgerName || 'Sales Account';
+  const cgstLedger = config.cgstLedgerName || 'Output CGST';
+  const sgstLedger = config.sgstLedgerName || 'Output SGST';
+  const igstLedger = config.igstLedgerName || 'Output IGST';
+  const roundOffLedger = config.roundOffLedgerName || 'Round Off';
+
+  // 1. Units
+  const units = new Set<string>();
+  (invoice.items || []).forEach((it) => {
+    const u = (it.unit || 'Nos').trim();
+    if (u) units.add(u);
+  });
+  if (units.size === 0) units.add('Nos');
+
+  const unitXmls = Array.from(units)
+    .map(
+      (u) => `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <UNIT NAME="${xmlEscape(u)}" ACTION="Create">
+        <NAME>${xmlEscape(u)}</NAME>
+        <ISSIMPLEUNIT>Yes</ISSIMPLEUNIT>
+      </UNIT>
+    </TALLYMESSAGE>`
+    )
+    .join('\n');
+
+  // 2. Debtor ledger
+  const partyState = invoice.partyState || invoice.sellerState || 'Delhi';
+  const partyAddress = invoice.completeAddress || '';
+  const partyGstin = (invoice.gstin || invoice.partyGstin || '').toUpperCase();
+  const partyXml = `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${xmlEscape(invoice.partyName)}" ACTION="Create">
+        <NAME>${xmlEscape(invoice.partyName)}</NAME>
+        <PARENT>Sundry Debtors</PARENT>
+        <ISBILLWISEON>Yes</ISBILLWISEON>
+        <MAILINGNAME>${xmlEscape(invoice.partyName)}</MAILINGNAME>
+        ${partyAddress ? `<ADDRESS.LIST><ADDRESS>${xmlEscape(partyAddress)}</ADDRESS></ADDRESS.LIST>` : ''}
+        <STATENAME>${xmlEscape(partyState)}</STATENAME>
+        ${invoice.pinCode ? `<PINCODE>${xmlEscape(invoice.pinCode)}</PINCODE>` : ''}
+        <COUNTRYNAME>India</COUNTRYNAME>
+        ${partyGstin ? `<PARTYGSTIN>${xmlEscape(partyGstin)}</PARTYGSTIN><GSTIN>${xmlEscape(partyGstin)}</GSTIN>` : ''}
+        <GSTREGISTRATIONTYPE>${partyGstin ? 'Regular' : 'Unregistered'}</GSTREGISTRATIONTYPE>
+      </LEDGER>
+    </TALLYMESSAGE>`;
+
+  // 3. Stock items
+  const itemXmls = (invoice.items || [])
+    .map(
+      (it) => `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <STOCKITEM NAME="${xmlEscape(it.name)}" ACTION="Create">
+        <NAME>${xmlEscape(it.name)}</NAME>
+        <BASEUNITS>${xmlEscape(it.unit || 'Nos')}</BASEUNITS>
+        <OPENINGRATE>${it.rate || 0}</OPENINGRATE>
+        <STANDARDCOST>${it.rate || 0}</STANDARDCOST>
+        <GSTDETAILS.LIST>
+          <APPLICABLEFROM>20170701</APPLICABLEFROM>
+          <TAXABILITY>Taxable</TAXABILITY>
+          <HSNCODE>${xmlEscape(it.hsn || '')}</HSNCODE>
+          <GSTRATE>${Number(it.gstRate) || 18}</GSTRATE>
+          <IGSTRATE>${Number(it.gstRate) || 18}</IGSTRATE>
+          <CGSTRATE>${(Number(it.gstRate) || 18) / 2}</CGSTRATE>
+          <SGSTRATE>${(Number(it.gstRate) || 18) / 2}</SGSTRATE>
+        </GSTDETAILS.LIST>
+      </STOCKITEM>
+    </TALLYMESSAGE>`
+    )
+    .join('\n');
+
+  // 4. Sales & Tax Ledgers
+  const ledgerXmls = `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${xmlEscape(salesLedger)}" ACTION="Create">
+        <NAME>${xmlEscape(salesLedger)}</NAME>
+        <PARENT>Sales Accounts</PARENT>
+      </LEDGER>
+    </TALLYMESSAGE>
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${xmlEscape(cgstLedger)}" ACTION="Create">
+        <NAME>${xmlEscape(cgstLedger)}</NAME>
+        <PARENT>Duties &amp; Taxes</PARENT>
+        <TAXTYPE>GST</TAXTYPE>
+        <GSTDUTYHEAD>CGST</GSTDUTYHEAD>
+      </LEDGER>
+    </TALLYMESSAGE>
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${xmlEscape(sgstLedger)}" ACTION="Create">
+        <NAME>${xmlEscape(sgstLedger)}</NAME>
+        <PARENT>Duties &amp; Taxes</PARENT>
+        <TAXTYPE>GST</TAXTYPE>
+        <GSTDUTYHEAD>SGST/UTGST</GSTDUTYHEAD>
+      </LEDGER>
+    </TALLYMESSAGE>
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${xmlEscape(igstLedger)}" ACTION="Create">
+        <NAME>${xmlEscape(igstLedger)}</NAME>
+        <PARENT>Duties &amp; Taxes</PARENT>
+        <TAXTYPE>GST</TAXTYPE>
+        <GSTDUTYHEAD>IGST</GSTDUTYHEAD>
+      </LEDGER>
+    </TALLYMESSAGE>
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${xmlEscape(roundOffLedger)}" ACTION="Create">
+        <NAME>${xmlEscape(roundOffLedger)}</NAME>
+        <PARENT>Indirect Expenses</PARENT>
+      </LEDGER>
+    </TALLYMESSAGE>
+    ${
+      invoice.freightAmount && invoice.freightAmount > 0
+        ? `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="Freight &amp; Forwarding Charges" ACTION="Create">
+        <NAME>Freight &amp; Forwarding Charges</NAME>
+        <PARENT>Direct Expenses</PARENT>
+      </LEDGER>
+    </TALLYMESSAGE>`
+        : ''
+    }
+    ${
+      invoice.labourAmount && invoice.labourAmount > 0
+        ? `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="Labour &amp; Handling Charges" ACTION="Create">
+        <NAME>Labour &amp; Handling Charges</NAME>
+        <PARENT>Direct Expenses</PARENT>
+      </LEDGER>
+    </TALLYMESSAGE>`
+        : ''
+    }
+  `;
+
+  const targetCompanyTag = targetCompany.trim()
+    ? `<SVCURRENTCOMPANY>${xmlEscape(targetCompany.trim())}</SVCURRENTCOMPANY>`
+    : '';
+
+  const mastersXml = `<ENVELOPE>
+    <HEADER><VERSION>1</VERSION><TALLYREQUEST>Import</TALLYREQUEST><TYPE>Data</TYPE><ID>All Masters</ID></HEADER>
+    <BODY>
+      <DESC><STATICVARIABLES>${targetCompanyTag}</STATICVARIABLES></DESC>
+      <DATA>
+        ${unitXmls}
+        ${partyXml}
+        ${itemXmls}
+        ${ledgerXmls}
+      </DATA>
+    </BODY>
+  </ENVELOPE>`;
+
+  try {
+    const res = await sendTallyRequest(mastersXml, config);
+    return { success: true, message: res?.text };
+  } catch (err: any) {
+    console.warn('Masters pre-sync to Tally notice:', err?.message || err);
+    return { success: false, message: err?.message };
+  }
+}
+
+/**
+ * Exports a single Invoice to Tally Prime with prerequisite masters creation and confirmation
  */
 export async function exportInvoiceToTally(
   invoice: Invoice,
@@ -2432,25 +2796,28 @@ export async function exportInvoiceToTally(
       message: `Invoice date "${invoice.invoiceDate || ''}" valid nahi hai. Date ko YYYY-MM-DD ya DD/MM/YYYY format mein set karke dobara sync karein.`,
     };
   }
-  if (!isDateInCurrentFinancialYear(invoice.invoiceDate)) {
-    return {
-      success: false,
-      message: 'Invoice current financial year (01-Apr to 31-Mar) ke bahar hai. Tally sync blocked.',
-    };
+
+  const targetCompany = companyName || config.companyName || invoice.sellerName || '';
+  const voucherType = invoice.tallyVoucherType || config.salesVoucherType || config.defaultVoucherType || 'Sales';
+
+  // 1. If voucher type is "Portal", ensure it exists in Tally with Manual numbering
+  if (voucherType.toLowerCase() === 'portal') {
+    try {
+      await ensurePortalVoucherTypeInTally(config, targetCompany);
+    } catch (voucherTypeCheckError: any) {
+      console.warn('Portal voucher type pre-check:', voucherTypeCheckError?.message || voucherTypeCheckError);
+    }
   }
 
-  const targetCompany = companyName || config.companyName || '';
-
-  // Voucher type check is best-effort. The actual voucher import below is the
-  // authoritative Tally operation. A temporary bridge 502 during the check
-  // must not block a valid Portal voucher export.
+  // 2. Ensure all prerequisite masters (Units, Stock Items, Debtor Ledger, Sales & Tax Ledgers) exist in Tally
   try {
-    await ensurePortalVoucherTypeInTally(config, targetCompany);
-  } catch (voucherTypeCheckError: any) {
-    console.warn('Portal voucher type pre-check skipped:', voucherTypeCheckError?.message || voucherTypeCheckError);
+    await ensureMastersForInvoice(invoice, config, targetCompany);
+  } catch (mastersErr: any) {
+    console.warn('Masters pre-sync to Tally notice:', mastersErr?.message || mastersErr);
   }
 
-  const xml = generateTallySalesVoucherXML(invoice, targetCompany);
+  // 3. Post voucher XML to Tally
+  const xml = generateTallySalesVoucherXML(invoice, targetCompany, config);
   const res = await sendTallyRequest(xml, config);
 
   if (!res || !res.text) {
@@ -2497,18 +2864,26 @@ export async function exportInvoiceToTally(
  * Generates an XML envelope containing multiple Sales Vouchers for bulk import
  */
 export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyName = ''): string {
+  const companyTag = companyName.trim()
+    ? `<SVCURRENTCOMPANY>${xmlEscape(companyName.trim())}</SVCURRENTCOMPANY>`
+    : '';
+
   const voucherXmls = invoices
     .map(inv => {
       const voucherDate = formatInvoiceDateForTally(inv.invoiceDate);
       const isInterState = inv.isInterState;
+      const voucherType = inv.tallyVoucherType || 'Sales';
+      const hasItems = Array.isArray(inv.items) && inv.items.length > 0;
 
-      const inventoryEntriesXML = inv.items
-        .map(item => {
-          const rate = Math.abs(Number(item.rate)) || 0;
-          const qty = Math.abs(Number(item.qty)) || 1;
-          const amount = +(qty * rate).toFixed(2);
+      let inventoryEntriesXML = '';
+      if (hasItems) {
+        inventoryEntriesXML = inv.items
+          .map(item => {
+            const rate = Math.abs(Number(item.rate)) || 0;
+            const qty = Math.abs(Number(item.qty)) || 1;
+            const amount = +(qty * rate).toFixed(2);
 
-          return `
+            return `
             <ALLINVENTORYENTRIES.LIST>
                 <STOCKITEMNAME>${xmlEscape(item.name)}</STOCKITEMNAME>
                 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -2524,8 +2899,45 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
                     <AMOUNT>${amount.toFixed(2)}</AMOUNT>
                 </ACCOUNTINGALLOCATIONS.LIST>
             </ALLINVENTORYENTRIES.LIST>`;
-        })
-        .join('\n');
+          })
+          .join('\n');
+      }
+
+      let serviceSalesXML = '';
+      if (!hasItems) {
+        serviceSalesXML = `
+            <LEDGERENTRIES.LIST>
+                <LEDGERNAME>Sales Account</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                <AMOUNT>${inv.subtotalTaxable.toFixed(2)}</AMOUNT>
+            </LEDGERENTRIES.LIST>`;
+      }
+
+      let expenseEntriesXML = '';
+      if (inv.freightAmount && inv.freightAmount > 0) {
+        expenseEntriesXML += `
+            <LEDGERENTRIES.LIST>
+                <LEDGERNAME>Freight &amp; Forwarding Charges</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                <AMOUNT>${inv.freightAmount.toFixed(2)}</AMOUNT>
+            </LEDGERENTRIES.LIST>`;
+      }
+      if (inv.labourAmount && inv.labourAmount > 0) {
+        expenseEntriesXML += `
+            <LEDGERENTRIES.LIST>
+                <LEDGERNAME>Labour &amp; Handling Charges</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                <AMOUNT>${inv.labourAmount.toFixed(2)}</AMOUNT>
+            </LEDGERENTRIES.LIST>`;
+      }
+      if (inv.otherExpenseAmount && inv.otherExpenseAmount > 0) {
+        expenseEntriesXML += `
+            <LEDGERENTRIES.LIST>
+                <LEDGERNAME>${xmlEscape(inv.otherExpenseLabel || 'Other Charges / Expenses')}</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                <AMOUNT>${inv.otherExpenseAmount.toFixed(2)}</AMOUNT>
+            </LEDGERENTRIES.LIST>`;
+      }
 
       let taxEntriesXML = '';
       if (isInterState) {
@@ -2556,12 +2968,26 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
         }
       }
 
+      let roundOffXML = '';
+      if (inv.roundOff && Math.abs(inv.roundOff) >= 0.01) {
+        const isCredit = inv.roundOff > 0;
+        roundOffXML = `
+            <LEDGERENTRIES.LIST>
+                <LEDGERNAME>Round Off</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>${isCredit ? 'No' : 'Yes'}</ISDEEMEDPOSITIVE>
+                <AMOUNT>${Math.abs(inv.roundOff).toFixed(2)}</AMOUNT>
+            </LEDGERENTRIES.LIST>`;
+      }
+
       return `
         <TALLYMESSAGE xmlns:UDF="TallyUDF">
-            <VOUCHER VCHTYPE="Portal" ACTION="Create" OBJVIEW="Invoice Voucher View">
+            <VOUCHER VCHTYPE="${xmlEscape(voucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
                 <DATE>${voucherDate}</DATE>
                 <EFFECTIVEDATE>${voucherDate}</EFFECTIVEDATE>
-                <VOUCHERTYPENAME>Portal</VOUCHERTYPENAME>
+                <VOUCHERTYPENAME>${xmlEscape(voucherType)}</VOUCHERTYPENAME>
+                <VCHENTRYMODE>${hasItems ? 'Item Invoice' : 'Accounting Invoice'}</VCHENTRYMODE>
+                <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
+                <OBJVIEW>Invoice Voucher View</OBJVIEW>
                 <VOUCHERNUMBER>${xmlEscape(inv.invoiceNo)}</VOUCHERNUMBER>
                 <REFERENCE>${xmlEscape(inv.invoiceNo)}</REFERENCE>
                 <PARTYLEDGERNAME>${xmlEscape(inv.partyName)}</PARTYLEDGERNAME>
@@ -2584,7 +3010,10 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
                     </BILLALLOCATIONS.LIST>
                 </LEDGERENTRIES.LIST>
                 ${inventoryEntriesXML}
+                ${serviceSalesXML}
+                ${expenseEntriesXML}
                 ${taxEntriesXML}
+                ${roundOffXML}
             </VOUCHER>
         </TALLYMESSAGE>`;
     })
@@ -2600,7 +3029,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
     <BODY>
         <DESC>
             <STATICVARIABLES>
-                <SVCURRENTCOMPANY>${xmlEscape(companyName)}</SVCURRENTCOMPANY>
+                ${companyTag}
             </STATICVARIABLES>
         </DESC>
         <DATA>
@@ -2623,10 +3052,14 @@ export async function performTwoWaySync({
   portalInvoices,
   sellerInfo,
   tallyConfig = DEFAULT_TALLY_CONFIG,
+  fromDate,
+  toDate,
 }: {
   portalInvoices: Invoice[];
   sellerInfo: SellerInfo;
   tallyConfig?: TallyConfig;
+  fromDate?: string;
+  toDate?: string;
 }): Promise<{
   updatedInvoices: Invoice[];
   newParties: Party[];
@@ -2658,7 +3091,7 @@ export async function performTwoWaySync({
   };
 
   try {
-    tallyResult = await fetchSalesVouchersFromTally(tallyConfig, sellerInfo);
+    tallyResult = await fetchSalesVouchersFromTally(tallyConfig, sellerInfo, fromDate, toDate);
   } catch (err: any) {
     report.errors.push(`Tally Fetch Warning: ${err.message}`);
   }
@@ -2667,14 +3100,16 @@ export async function performTwoWaySync({
   report.discoveredParties = tallyResult.extractedParties.length;
   report.discoveredItems = tallyResult.extractedItems.length;
 
-  // Build lookup index of existing portal invoices by normalized invoice number and GUID
+  // Build lookup index of existing portal invoices by normalized invoice number, GUID, and Master ID
   const portalMap = new Map<string, Invoice>();
   const guidMap = new Map<string, Invoice>();
+  const masterMap = new Map<string, Invoice>();
 
   portalInvoices.forEach((inv) => {
-    const normNo = inv.invoiceNo.trim().toLowerCase();
+    const normNo = (inv.invoiceNo || '').trim().toLowerCase();
     if (normNo) portalMap.set(normNo, inv);
     if (inv.tallyGuid) guidMap.set(inv.tallyGuid.trim().toLowerCase(), inv);
+    if (inv.tallyMasterId) masterMap.set(inv.tallyMasterId.trim().toLowerCase(), inv);
   });
 
   const mergedInvoices: Invoice[] = [...portalInvoices];
@@ -2682,10 +3117,14 @@ export async function performTwoWaySync({
 
   // Step 2: Process Tally Invoices into Portal (Import & De-duplication)
   tallyResult.invoices.forEach((tallyInv) => {
-    const normNo = tallyInv.invoiceNo.trim().toLowerCase();
-    const tallyGuid = tallyInv.tallyGuid ? tallyInv.tallyGuid.trim().toLowerCase() : '';
+    const normNo = (tallyInv.invoiceNo || '').trim().toLowerCase();
+    const tallyGuid = (tallyInv.tallyGuid || '').trim().toLowerCase();
+    const tallyMasterId = (tallyInv.tallyMasterId || '').trim().toLowerCase();
 
-    const existingMatch = (normNo && portalMap.get(normNo)) || (tallyGuid && guidMap.get(tallyGuid));
+    const existingMatch =
+      (normNo && portalMap.get(normNo)) ||
+      (tallyGuid && guidMap.get(tallyGuid)) ||
+      (tallyMasterId && masterMap.get(tallyMasterId));
 
     if (existingMatch) {
       // DUPLICATE PREVENTED: Already exists in portal! Update sync status to 'synced'
@@ -2714,8 +3153,10 @@ export async function performTwoWaySync({
       mergedInvoices.unshift(tallyInv);
       report.importedCount++;
       report.importedInvoices.push(tallyInv);
-      // Register in map so subsequent items don't duplicate
+      // Register in maps so subsequent items don't duplicate
       if (normNo) portalMap.set(normNo, tallyInv);
+      if (tallyGuid) guidMap.set(tallyGuid, tallyInv);
+      if (tallyMasterId) masterMap.set(tallyMasterId, tallyInv);
     }
   });
 

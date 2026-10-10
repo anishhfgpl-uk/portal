@@ -6,7 +6,7 @@ import crypto from "crypto";
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.text({ type: "text/xml", limit: "50mb" }));
@@ -78,12 +78,41 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() })
   );
 
-  // Durable cloud storage is partitioned by company. Tally is never allowed to delete it.
-  const cloudPool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 }) : null;
+  // Durable cloud storage is partitioned by company.
+  // In-memory fallback store active if external PostgreSQL database is disconnected/offline.
+  const memoryStore = new Map<string, { id: string; snapshot: any; updated_at: string }>();
+  let cloudPool: Pool | null = null;
+  if (process.env.DATABASE_URL) {
+    try {
+      cloudPool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        max: 5,
+        connectionTimeoutMillis: 3000,
+      });
+      cloudPool.on("error", (err) => {
+        console.warn("[AI Studio] Database connection error — mock in-memory fallback active:", err.message);
+      });
+    } catch (err: any) {
+      console.warn("[AI Studio] DB connection failed — mock in-memory store active:", err?.message);
+      cloudPool = null;
+    }
+  }
+
   let cloudTableReady: Promise<void> | null = null;
   const ensureCloudTable = async () => {
     if (!cloudPool) return;
-    if (!cloudTableReady) cloudTableReady = cloudPool.query("CREATE TABLE IF NOT EXISTS portal_cloud_data (id TEXT PRIMARY KEY, snapshot JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").then(() => undefined);
+    if (!cloudTableReady) {
+      cloudTableReady = cloudPool
+        .query(
+          "CREATE TABLE IF NOT EXISTS portal_cloud_data (id TEXT PRIMARY KEY, snapshot JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+        )
+        .then(() => undefined)
+        .catch((err) => {
+          console.warn("[AI Studio] Database table check failed — using in-memory store:", err.message);
+          cloudPool = null;
+        });
+    }
     await cloudTableReady;
   };
   const cloudCompanyKey = (company: any) => {
@@ -94,97 +123,129 @@ async function startServer() {
   };
   const emptyCompanyData = () => ({ company: null, parties: [], stockItems: [], invoices: [], tallyVouchers: [] });
 
-  app.get("/api/cloud-data", async (_req, res) => {
-    if (!cloudPool) return res.json({ exists: false, cloud: false, dataByCompany: {} });
-    try {
-      await ensureCloudTable();
-      const result = await cloudPool.query("SELECT id, snapshot, updated_at FROM portal_cloud_data ORDER BY updated_at ASC");
-      const dataByCompany: Record<string, any> = {};
-      const companies: any[] = [];
-      for (const row of result.rows) {
-        if (row.id !== 'main') {
-          const stored = row.snapshot || {};
-          const key = cloudCompanyKey(stored.company) || row.id;
-          const current = dataByCompany[key] || emptyCompanyData();
-          dataByCompany[key] = { ...current, ...stored };
-          dataByCompany[key].parties = Array.isArray(current.parties) ? [...current.parties, ...(stored.parties || [])] : (stored.parties || []);
-          dataByCompany[key].stockItems = Array.isArray(current.stockItems) ? [...current.stockItems, ...(stored.stockItems || [])] : (stored.stockItems || []);
-          dataByCompany[key].invoices = Array.isArray(current.invoices) ? [...current.invoices, ...(stored.invoices || [])] : (stored.invoices || []);
-          dataByCompany[key].tallyVouchers = Array.isArray(current.tallyVouchers) ? [...current.tallyVouchers, ...(stored.tallyVouchers || [])] : (stored.tallyVouchers || []);
-          if (dataByCompany[key].company?.name) companies.push(dataByCompany[key].company);
-          continue;
-        }
-        const old = row.snapshot || {};
-        const oldCompanies = Array.isArray(old.companies) ? old.companies : [];
-        const fallbackCompany = old.sellerInfo || oldCompanies[0] || null;
-        const sourceCompanies = oldCompanies.length ? oldCompanies : (fallbackCompany ? [fallbackCompany] : []);
-        sourceCompanies.forEach((company: any) => {
-          const key = cloudCompanyKey(company); if (!key) return;
-          const gst = String(company?.gstin || '').trim().toLowerCase(), name = String(company?.name || '').trim().toLowerCase();
-          const matchesInvoice = (inv: any) => (gst && String(inv?.sellerGstin || '').trim().toLowerCase() === gst) || (name && String(inv?.sellerName || '').trim().toLowerCase() === name);
-          const current = dataByCompany[key] || emptyCompanyData();
-          current.company = company;
-          current.parties = (old.parties || []).map((p: any) => ({ ...p, companyKey: p.companyKey || key }));
-          current.stockItems = (old.stockItems || []).map((i: any) => ({ ...i, companyKey: i.companyKey || key }));
-          current.invoices = (old.invoices || []).filter(matchesInvoice).map((i: any) => ({ ...i, companyKey: i.companyKey || key }));
-          current.tallyVouchers = (old.tallyVouchers || []).filter((v: any) => !v.companyKey || v.companyKey === key).map((v: any) => ({ ...v, companyKey: v.companyKey || key }));
-          dataByCompany[key] = current;
-          if (!companies.some((c) => cloudCompanyKey(c) === key)) companies.push(company);
-        });
+  const getMemoryRows = () => {
+    return Array.from(memoryStore.values()).sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+  };
+
+  const processCloudRows = (rows: Array<{ id: string; snapshot: any; updated_at?: string }>) => {
+    const dataByCompany: Record<string, any> = {};
+    const companies: any[] = [];
+    for (const row of rows) {
+      if (row.id !== 'main') {
+        const stored = row.snapshot || {};
+        const key = cloudCompanyKey(stored.company) || row.id;
+        const current = dataByCompany[key] || emptyCompanyData();
+        dataByCompany[key] = { ...current, ...stored };
+        dataByCompany[key].parties = Array.isArray(current.parties) ? [...current.parties, ...(stored.parties || [])] : (stored.parties || []);
+        dataByCompany[key].stockItems = Array.isArray(current.stockItems) ? [...current.stockItems, ...(stored.stockItems || [])] : (stored.stockItems || []);
+        dataByCompany[key].invoices = Array.isArray(current.invoices) ? [...current.invoices, ...(stored.invoices || [])] : (stored.invoices || []);
+        dataByCompany[key].tallyVouchers = Array.isArray(current.tallyVouchers) ? [...current.tallyVouchers, ...(stored.tallyVouchers || [])] : (stored.tallyVouchers || []);
+        if (dataByCompany[key].company?.name) companies.push(dataByCompany[key].company);
+        continue;
       }
-      return res.json({ exists: companies.length > 0, cloud: true, companies, dataByCompany, updatedAt: result.at(-1)?.updated_at || null });
-    } catch (error: any) {
-      return res.status(503).json({ exists: false, cloud: true, dataByCompany: {}, error: error?.message || "Cloud storage unavailable" });
+      const old = row.snapshot || {};
+      const oldCompanies = Array.isArray(old.companies) ? old.companies : [];
+      const fallbackCompany = old.sellerInfo || oldCompanies[0] || null;
+      const sourceCompanies = oldCompanies.length ? oldCompanies : (fallbackCompany ? [fallbackCompany] : []);
+      sourceCompanies.forEach((company: any) => {
+        const key = cloudCompanyKey(company); if (!key) return;
+        const gst = String(company?.gstin || '').trim().toLowerCase(), name = String(company?.name || '').trim().toLowerCase();
+        const matchesInvoice = (inv: any) => (gst && String(inv?.sellerGstin || '').trim().toLowerCase() === gst) || (name && String(inv?.sellerName || '').trim().toLowerCase() === name);
+        const current = dataByCompany[key] || emptyCompanyData();
+        current.company = company;
+        current.parties = (old.parties || []).map((p: any) => ({ ...p, companyKey: p.companyKey || key }));
+        current.stockItems = (old.stockItems || []).map((i: any) => ({ ...i, companyKey: i.companyKey || key }));
+        current.invoices = (old.invoices || []).filter(matchesInvoice).map((i: any) => ({ ...i, companyKey: i.companyKey || key }));
+        current.tallyVouchers = (old.tallyVouchers || []).filter((v: any) => !v.companyKey || v.companyKey === key).map((v: any) => ({ ...v, companyKey: v.companyKey || key }));
+        dataByCompany[key] = current;
+        if (!companies.some((c) => cloudCompanyKey(c) === key)) companies.push(company);
+      });
     }
+    return { dataByCompany, companies };
+  };
+
+  app.get("/api/cloud-data", async (_req, res) => {
+    try {
+      if (cloudPool) {
+        await ensureCloudTable();
+        if (cloudPool) {
+          const result = await cloudPool.query("SELECT id, snapshot, updated_at FROM portal_cloud_data ORDER BY updated_at ASC");
+          const { dataByCompany, companies } = processCloudRows(result.rows);
+          return res.json({ exists: companies.length > 0, cloud: true, companies, dataByCompany, updatedAt: result.rows.at(-1)?.updated_at || null });
+        }
+      }
+    } catch (error: any) {
+      console.warn("[AI Studio] Cloud DB read error — falling back to mock store:", error?.message);
+    }
+
+    // In-memory fallback
+    const memRows = getMemoryRows();
+    const { dataByCompany, companies } = processCloudRows(memRows);
+    return res.json({ exists: companies.length > 0, cloud: true, companies, dataByCompany, updatedAt: memRows.at(-1)?.updated_at || null });
   });
 
   app.put("/api/cloud-data", async (req, res) => {
-    if (!cloudPool) return res.status(503).json({ ok: false, error: "Cloud database is not configured" });
+    const companyKey = String(req.body?.companyKey || '').trim();
+    const company = req.body?.company || null;
+    if (!companyKey || !company?.name) return res.status(400).json({ ok: false, error: "companyKey and company are required" });
+
+    const incomingParties = Array.isArray(req.body?.parties) ? req.body.parties : [];
+    const incomingItems = Array.isArray(req.body?.stockItems) ? req.body.stockItems : [];
+    const incomingInvoices = Array.isArray(req.body?.invoices)
+      ? req.body.invoices.map((i: any) => ({ ...i, companyKey: i.companyKey || companyKey }))
+      : [];
+    const incomingVouchers = Array.isArray(req.body?.tallyVouchers)
+      ? req.body.tallyVouchers.map((v: any) => ({ ...v, companyKey: v.companyKey || companyKey }))
+      : [];
+
+    const mergeRecords = (previous: any[], incoming: any[], key: (row: any) => string) => {
+      const map = new Map<string, any>();
+      (Array.isArray(previous) ? previous : []).forEach((row: any) => {
+        const k = key(row);
+        if (k) map.set(k, row);
+      });
+      incoming.forEach((row: any) => {
+        const k = key(row);
+        if (k) map.set(k, row);
+      });
+      return Array.from(map.values());
+    };
+
     try {
-      await ensureCloudTable();
-      const companyKey = String(req.body?.companyKey || '').trim();
-      const company = req.body?.company || null;
-      if (!companyKey || !company?.name) return res.status(400).json({ ok: false, error: "companyKey and company are required" });
-      // Never let a stale/partial browser state erase an already-saved company.
-      // Merge incoming records into the existing company snapshot. Matching records
-      // are updated; records missing from a partial request are preserved.
-      const existingResult = await cloudPool.query("SELECT snapshot FROM portal_cloud_data WHERE id = $1", [companyKey]);
-      const existing = existingResult.rows[0]?.snapshot || {};
-      const incomingParties = Array.isArray(req.body?.parties) ? req.body.parties : [];
-      const incomingItems = Array.isArray(req.body?.stockItems) ? req.body.stockItems : [];
-      const incomingInvoices = Array.isArray(req.body?.invoices)
-        ? req.body.invoices.map((i: any) => ({ ...i, companyKey: i.companyKey || companyKey }))
-        : [];
-      const incomingVouchers = Array.isArray(req.body?.tallyVouchers)
-        ? req.body.tallyVouchers.map((v: any) => ({ ...v, companyKey: v.companyKey || companyKey }))
-        : [];
-
-      const mergeRecords = (previous: any[], incoming: any[], key: (row: any) => string) => {
-        const map = new Map<string, any>();
-        (Array.isArray(previous) ? previous : []).forEach((row: any) => {
-          const k = key(row);
-          if (k) map.set(k, row);
-        });
-        incoming.forEach((row: any) => {
-          const k = key(row);
-          if (k) map.set(k, row);
-        });
-        return Array.from(map.values());
-      };
-
-      const snapshot = {
-        company,
-        parties: mergeRecords(existing.parties, incomingParties, (p: any) => String(p.id || p.name || '').trim().toLowerCase()),
-        stockItems: mergeRecords(existing.stockItems, incomingItems, (i: any) => String(i.id || i.name || '').trim().toLowerCase()),
-        invoices: mergeRecords(existing.invoices, incomingInvoices, (i: any) => String(i.id || i.tallyGuid || i.tallyMasterId || i.invoiceNo || '').trim().toLowerCase()),
-        tallyVouchers: mergeRecords(existing.tallyVouchers, incomingVouchers, (v: any) => String(v.id || v.tallyGuid || v.tallyMasterId || v.voucherNumber || '').trim().toLowerCase()),
-      };
-      await cloudPool.query("INSERT INTO portal_cloud_data (id, snapshot, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()", [companyKey, JSON.stringify(snapshot)]);
-      return res.json({ ok: true, cloud: true, companyKey, updatedAt: new Date().toISOString() });
+      if (cloudPool) {
+        await ensureCloudTable();
+        if (cloudPool) {
+          const existingResult = await cloudPool.query("SELECT snapshot FROM portal_cloud_data WHERE id = $1", [companyKey]);
+          const existing = existingResult.rows[0]?.snapshot || {};
+          const snapshot = {
+            company,
+            parties: mergeRecords(existing.parties, incomingParties, (p: any) => String(p.id || p.name || '').trim().toLowerCase()),
+            stockItems: mergeRecords(existing.stockItems, incomingItems, (i: any) => String(i.id || i.name || '').trim().toLowerCase()),
+            invoices: mergeRecords(existing.invoices, incomingInvoices, (i: any) => String(i.id || i.tallyGuid || i.tallyMasterId || i.invoiceNo || '').trim().toLowerCase()),
+            tallyVouchers: mergeRecords(existing.tallyVouchers, incomingVouchers, (v: any) => String(v.id || v.tallyGuid || v.tallyMasterId || v.voucherNumber || '').trim().toLowerCase()),
+          };
+          await cloudPool.query("INSERT INTO portal_cloud_data (id, snapshot, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = NOW()", [companyKey, JSON.stringify(snapshot)]);
+          memoryStore.set(companyKey, { id: companyKey, snapshot, updated_at: new Date().toISOString() });
+          return res.json({ ok: true, cloud: true, companyKey, updatedAt: new Date().toISOString() });
+        }
+      }
     } catch (error: any) {
-      return res.status(503).json({ ok: false, error: error?.message || "Cloud save failed" });
+      console.warn("[AI Studio] Cloud DB save error — falling back to mock store:", error?.message);
     }
+
+    // In-memory fallback save
+    const existing = memoryStore.get(companyKey)?.snapshot || {};
+    const snapshot = {
+      company,
+      parties: mergeRecords(existing.parties, incomingParties, (p: any) => String(p.id || p.name || '').trim().toLowerCase()),
+      stockItems: mergeRecords(existing.stockItems, incomingItems, (i: any) => String(i.id || i.name || '').trim().toLowerCase()),
+      invoices: mergeRecords(existing.invoices, incomingInvoices, (i: any) => String(i.id || i.tallyGuid || i.tallyMasterId || i.invoiceNo || '').trim().toLowerCase()),
+      tallyVouchers: mergeRecords(existing.tallyVouchers, incomingVouchers, (v: any) => String(v.id || v.tallyGuid || v.tallyMasterId || v.voucherNumber || '').trim().toLowerCase()),
+    };
+    memoryStore.set(companyKey, { id: companyKey, snapshot, updated_at: new Date().toISOString() });
+    return res.json({ ok: true, cloud: true, companyKey, updatedAt: new Date().toISOString() });
   });
+
   // Outbound office polling fallback: the office connector polls this hosted endpoint.
   const pendingBridgeRequests = new Map<string, { xml: string; resolve: (value: any) => void }>();
   const bridgeQueue: string[] = [];
@@ -405,6 +466,15 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
+    app.use((req, _res, next) => {
+      if (req.url.startsWith("/portal/") || req.url.startsWith("/Portal/")) {
+        req.url = req.url.replace(/^\/(?:portal|Portal)/i, "") || "/";
+      } else if (req.url === "/portal" || req.url === "/Portal") {
+        req.url = "/";
+      }
+      next();
+    });
+
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

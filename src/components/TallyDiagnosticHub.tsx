@@ -44,6 +44,7 @@ export const TallyDiagnosticHub: React.FC<TallyDiagnosticHubProps> = ({
   const [consoleError, setConsoleError] = useState<string | null>(null);
 
   const [copiedScript, setCopiedScript] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
   const handleSaveConfig = () => {
     onUpdateConfig({
@@ -51,7 +52,8 @@ export const TallyDiagnosticHub: React.FC<TallyDiagnosticHubProps> = ({
       tallyUrl: customUrl.trim(),
       proxyMode: proxyMode,
     });
-    alert('Tally configuration saved!');
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 2500);
   };
 
   const handleTemplateChange = (key: string) => {
@@ -209,9 +211,16 @@ pause`;
           <div className="md:col-span-2">
             <button
               onClick={handleSaveConfig}
-              className="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
+              className={`w-full py-2 ${saveSuccess ? 'bg-emerald-600' : 'bg-slate-800 hover:bg-slate-900'} text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5`}
             >
-              Save URL
+              {saveSuccess ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  Configuration Saved!
+                </>
+              ) : (
+                'Save URL'
+              )}
             </button>
           </div>
         </div>

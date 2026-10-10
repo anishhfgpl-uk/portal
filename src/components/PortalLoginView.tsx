@@ -72,7 +72,7 @@ export const PortalLoginView: React.FC<PortalLoginViewProps> = ({ onAuthenticate
                 onChange={(e) => setUserId(e.target.value)}
                 autoComplete="username"
                 autoFocus
-                placeholder="Enter User ID"
+                placeholder="Enter User ID (Default: admin)"
                 className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
               />
             </div>
@@ -85,7 +85,7 @@ export const PortalLoginView: React.FC<PortalLoginViewProps> = ({ onAuthenticate
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                placeholder="Enter Password"
+                placeholder="Enter Password (Default: admin123)"
                 className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
               />
             </div>

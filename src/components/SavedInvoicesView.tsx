@@ -163,9 +163,11 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
 
     try {
       const result = await performTwoWaySync({
-        portalInvoices: invoices.filter(isCurrentFyInvoice),
+        portalInvoices: invoices,
         sellerInfo,
         tallyConfig,
+        fromDate: invoiceFromDate,
+        toDate: invoiceToDate,
       });
 
       onBulkUpdateInvoices(result.updatedInvoices);

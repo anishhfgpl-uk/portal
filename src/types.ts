@@ -45,12 +45,16 @@ export interface InvoiceItemRow {
   sgstAmount: number;
   igstAmount: number;
   totalAmount: number;
+  amount?: number;
 }
+
+export type InvoiceItem = InvoiceItemRow;
 
 export interface Invoice {
   id: string;
   invoiceNo: string;
   invoiceDate: string;
+  date?: string;
   dueDate?: string;
   sellerState: string;
   sellerStateCode: string;
@@ -63,6 +67,7 @@ export interface Invoice {
   partyId?: string;
   partyName: string;
   gstin: string;
+  partyGstin?: string;
   mobile: string;
   partyState: string;
   stateCode: string;
@@ -100,25 +105,33 @@ export interface Invoice {
   totalCgst: number;
   totalSgst: number;
   totalIgst: number;
+  cgstAmount?: number;
+  sgstAmount?: number;
+  igstAmount?: number;
   totalTax: number;
   roundOff: number;
   grandTotal: number;
+  totalAmount?: number;
   amountInWords: string;
   
   // Status
   isInterState: boolean;
   tallySyncStatus: 'synced' | 'pending' | 'failed' | 'not_synced';
+  syncStatus?: 'synced' | 'pending' | 'failed' | 'not_synced';
   tallySyncMessage?: string;
   tallySyncDate?: string;
   tallyGuid?: string;
   tallyMasterId?: string;
   tallyVoucherType?: string;
+  voucherType?: string;
+  salesLedger?: string;
   source?: 'portal' | 'tally_import';
   /** Stable company key used to isolate invoices between Tally companies. */
   companyKey?: string;
   isDuplicateProtected?: boolean;
   createdAt: string;
   notes?: string;
+  narration?: string;
 }
 
 export interface SyncException {
@@ -189,6 +202,13 @@ export interface SellerInfo {
 
 export interface TallyConfig {
   tallyUrl: string;
+  host?: string;
+  salesLedgerName?: string;
+  salesVoucherType?: string;
+  igstLedgerName?: string;
+  cgstLedgerName?: string;
+  sgstLedgerName?: string;
+  roundOffLedgerName?: string;
   /** Office bridge secret entered once on this browser; never hard-coded in the app. */
   bridgeToken?: string;
   tallyPort?: number;
@@ -197,6 +217,18 @@ export interface TallyConfig {
   companyName?: string;
   defaultVoucherType?: string;
   financialYear?: string;
+}
+
+export interface SyncSummary {
+  created: number;
+  altered: number;
+  deleted: number;
+  combined: number;
+  ignored: number;
+  errors: number;
+  exceptions: number;
+  rawResponse?: string;
+  logMessage?: string;
 }
 
 export interface ImportStatusState {

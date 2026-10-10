@@ -843,6 +843,7 @@ export default function App() {
             ...prev.filter((c) => !isDemoCompany(c)),
             ...actualCompanies,
           ]));
+          const activeCompany = actualCompanies[0];
           setImportStatus({
             message: '🟢 Tally connected — actual OPEN company imported: ' + activeCompany.name,
             type: 'success',
@@ -973,7 +974,7 @@ export default function App() {
       });
       const companyRelevant = relevant.map((v) => ({ ...v, companyKey: activeCompanyKey }));
       setTallyVouchers(prev => {
-        const map = new Map(prev.map(v => [v.tallyGuid || v.tallyMasterId || v.id, v]));
+        const map = new Map<string, TallyVoucher>(prev.map(v => [v.tallyGuid || v.tallyMasterId || v.id, v]));
         companyRelevant.forEach(v => map.set(v.tallyGuid || v.tallyMasterId || v.id, v));
         return Array.from(map.values()).sort((a,b) => b.date.localeCompare(a.date));
       });
