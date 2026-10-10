@@ -1562,7 +1562,7 @@ export function generateTallySalesVoucherXML(
         </DESC>
         <DATA>
             <TALLYMESSAGE xmlns:UDF="TallyUDF">
-                <VOUCHER VCHTYPE="${xmlEscape(voucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
+                <VOUCHER DATE="${voucherDate}" VCHTYPE="${xmlEscape(voucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
                     <DATE>${voucherDate}</DATE>
                     <EFFECTIVEDATE>${voucherDate}</EFFECTIVEDATE>
                     <VOUCHERTYPENAME>${xmlEscape(voucherType)}</VOUCHERTYPENAME>
@@ -2864,6 +2864,11 @@ export async function exportInvoiceToTally(
  * Generates an XML envelope containing multiple Sales Vouchers for bulk import
  */
 export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyName = ''): string {
+  const invalidDates = invoices.filter(inv => !formatInvoiceDateForTally(inv.invoiceDate));
+  if (invalidDates.length) {
+    const invoiceNumbers = invalidDates.map(inv => inv.invoiceNo || '(unnumbered)').join(', ');
+    throw new Error(`Voucher date missing or invalid for invoice(s): ${invoiceNumbers}. Set each invoice date before sending to Tally.`);
+  }
   const companyTag = companyName.trim()
     ? `<SVCURRENTCOMPANY>${xmlEscape(companyName.trim())}</SVCURRENTCOMPANY>`
     : '';
@@ -2981,7 +2986,7 @@ export function generateTallyBatchSalesVouchersXML(invoices: Invoice[], companyN
 
       return `
         <TALLYMESSAGE xmlns:UDF="TallyUDF">
-            <VOUCHER VCHTYPE="${xmlEscape(voucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
+            <VOUCHER DATE="${voucherDate}" VCHTYPE="${xmlEscape(voucherType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
                 <DATE>${voucherDate}</DATE>
                 <EFFECTIVEDATE>${voucherDate}</EFFECTIVEDATE>
                 <VOUCHERTYPENAME>${xmlEscape(voucherType)}</VOUCHERTYPENAME>
