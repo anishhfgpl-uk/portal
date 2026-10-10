@@ -30,7 +30,6 @@ import {
   exportInvoiceToTally,
   fetchSalesVouchersFromTally,
   fetchAccountingVouchersFromTally,
-  performTwoWaySync,
   getCurrentFinancialYearRange,
 } from '../services/tallyService';
 import { TallySyncReportModal } from './TallySyncReportModal';
@@ -89,7 +88,6 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [companyFilterMode, setCompanyFilterMode] = useState<'active' | 'all'>('active');
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
-  const [isTwoWaySyncing, setIsTwoWaySyncing] = useState<boolean>(false);
   const [isImportingFromTally, setIsImportingFromTally] = useState<boolean>(false);
   const [isImportingAccountingVouchers, setIsImportingAccountingVouchers] = useState<boolean>(false);
   const [accountingVouchers, setAccountingVouchers] = useState<TallyVoucher[]>([]);
@@ -155,44 +153,6 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const syncedInvoices = companyScopedInvoices.filter((i) => i.tallySyncStatus === 'synced');
   const importedInvoices = companyScopedInvoices.filter((i) => i.source === 'tally_import');
   const portalInvoices = companyScopedInvoices.filter((i) => i.source === 'portal' || (i.tallyVoucherType || '').trim().toLowerCase() === 'portal');
-
-  // 1. Two-Way Smart Sync (Import new from Tally, de-duplicate, and export pending to Tally)
-  const handleTwoWaySmartSync = async () => {
-    setIsTwoWaySyncing(true);
-    setActionMessage(null);
-
-    try {
-      const result = await performTwoWaySync({
-        portalInvoices: invoices,
-        sellerInfo,
-        tallyConfig,
-        fromDate: invoiceFromDate,
-        toDate: invoiceToDate,
-      });
-
-      onBulkUpdateInvoices(result.updatedInvoices);
-
-      if (result.newParties.length > 0 && onAddParties) {
-        onAddParties(result.newParties);
-      }
-      if (result.newItems.length > 0 && onAddItems) {
-        onAddItems(result.newItems);
-      }
-
-      setSyncReport(result.report);
-      setIsReportModalOpen(true);
-
-      const msg = `✅ Two-Way Sync Complete! ${result.report.importedCount} Imported, ${result.report.exportedCount} Exported, ${result.report.duplicatesPreventedCount} Duplicates Prevented.`;
-      setActionMessage({ text: msg, type: 'success' });
-    } catch (err: any) {
-      setActionMessage({
-        text: `❌ Two-Way Sync Failed: ${err.message}. Ensure Tally Prime is running on Port 9000.`,
-        type: 'error',
-      });
-    } finally {
-      setIsTwoWaySyncing(false);
-    }
-  };
 
   // 2. Direct Import from Tally Prime (Fetch Sales Vouchers)
   const handleImportFromTally = async () => {
@@ -618,7 +578,7 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
         </div>
       </div>
 
-      {/* Two-Way Sync Command Center Header */}
+      {/* Invoice Export Command Center Header */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 rounded-2xl p-6 text-white shadow-lg border border-slate-700/50">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
           <div className="space-y-1.5">
@@ -635,41 +595,20 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               Tally Prime Invoice Synchronization &amp; Repository
             </h2>
             <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
-              Tally me bane huye invoices import karein aur portal par bane huye bills Tally me export karein. Hamara smart deduplication engine ensure karta hai ki koi bhi invoice duplicate na bane.
+              Select invoice(s) from the list and export them directly to the currently selected Tally company. Only successful Tally responses are marked as synced.
             </p>
           </div>
 
-          {/* Invoice import date range */}
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0 bg-slate-950/40 rounded-xl p-2 border border-slate-700/60">
-            <label className="text-[10px] font-bold text-slate-300 uppercase">From</label>
-            <input
-              type="date"
-              value={invoiceFromDate}
-              onChange={(e) => setInvoiceFromDate(e.target.value)}
-              className="px-2.5 py-2 bg-white text-slate-900 rounded-lg text-xs font-semibold border-0"
-              aria-label="Invoice import from date"
-            />
-            <label className="text-[10px] font-bold text-slate-300 uppercase">To</label>
-            <input
-              type="date"
-              value={invoiceToDate}
-              onChange={(e) => setInvoiceToDate(e.target.value)}
-              className="px-2.5 py-2 bg-white text-slate-900 rounded-lg text-xs font-semibold border-0"
-              aria-label="Invoice import to date"
-            />
-          </div>
-
-          {/* Sync Action Buttons */}
+          {/* Sync Action Buttons — export only; import date controls are kept out of this screen */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            {/* 2-Way Smart Sync */}
             <button
-              onClick={handleTwoWaySmartSync}
-              disabled={isTwoWaySyncing}
+              onClick={handleExportSelected}
+              disabled={isExportingPending || selectedInvoiceIds.size === 0}
               className="flex items-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-blue-500/20 transition cursor-pointer disabled:opacity-50"
-              title="Import current financial year invoices from Tally and prevent duplicates"
+              title="Export only the selected invoices to Tally Prime"
             >
-              <RefreshCw className={`w-4 h-4 ${isTwoWaySyncing ? 'animate-spin' : ''}`} />
-              <span>{isTwoWaySyncing ? 'Syncing...' : '2-Way Smart Sync'}</span>
+              <ArrowUpFromLine className={`w-4 h-4 ${isExportingPending ? 'animate-bounce' : ''}`} />
+              <span>{isExportingPending ? 'Exporting...' : 'Export'}</span>
             </button>
 
             {/* Import from Tally */}
@@ -693,17 +632,6 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
               <ArrowDownToLine className={"w-4 h-4 " + (isImportingAccountingVouchers ? 'animate-bounce' : '')} />
               <span>{isImportingAccountingVouchers ? 'Importing...' : 'Receipt / Payment / Credit Note'}</span>
             </button>
-            {/* Export Pending to Tally */}
-            <button
-              onClick={handleExportSelected}
-              disabled={isExportingPending || selectedInvoiceIds.size === 0}
-              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-700/80 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-bold border border-amber-500/30 transition cursor-pointer disabled:opacity-50"
-              title="Push only the selected invoices to Tally Prime"
-            >
-              <ArrowUpFromLine className={`w-4 h-4 ${isExportingPending ? 'animate-bounce' : ''}`} />
-              <span>{isExportingPending ? 'Syncing...' : `Sync Selected (${selectedInvoiceIds.size})`}</span>
-            </button>
-
             {/* Paste XML Button */}
             {onOpenXmlPaste && (
               <button
