@@ -2335,7 +2335,8 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
       }
     }
 
-    if (items.length === 0) return;
+    const voucherAmountRaw = getNodeValue(vch, 'AMOUNT');
+    const voucherAmount = voucherAmountRaw ? Math.abs(parseFloat(voucherAmountRaw.replace(/,/g, '')) || 0) : 0;
 
     const subtotalTaxable = items.reduce((acc, it) => acc + it.taxableAmount, 0);
 
