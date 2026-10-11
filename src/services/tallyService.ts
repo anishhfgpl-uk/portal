@@ -1970,7 +1970,7 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
     });
 
     // If no inventory entries, use accounting ledger entry
-    if (items.length === 0) {
+    if (items.length === 0 && ledgerNodes.length > 0) {
       let serviceTaxable = serviceSalesTaxable;
       if (!serviceTaxable) {
         const anyAmtMatch = block.match(/<AMOUNT>([^<]+)<\/AMOUNT>/i);
@@ -2001,7 +2001,8 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
       }
     }
 
-    if (items.length === 0) return;
+    const voucherAmountRaw = getNodeValue(vch, 'AMOUNT');
+    const voucherAmount = voucherAmountRaw ? Math.abs(parseFloat(voucherAmountRaw.replace(/,/g, '')) || 0) : 0;
 
     const subtotalTaxable = items.reduce((sum, it) => sum + it.taxableAmount, 0);
 
@@ -2035,7 +2036,7 @@ function extractSalesVouchersWithRegex(rawXml: string, sellerInfo?: SellerInfo):
     const totalTax = totalCgst + totalSgst + totalIgst + ledgerCess;
 
     const calculatedTotal = subtotalTaxable + totalTax + ledgerFreight + ledgerLabour + ledgerOtherExpense + ledgerRoundOff;
-    const grandTotal = partyAmount > 0 ? partyAmount : Math.round(calculatedTotal);
+    const grandTotal = partyAmount > 0 ? partyAmount : (voucherAmount > 0 ? voucherAmount : Math.round(calculatedTotal));
     const roundOff = ledgerRoundOff !== 0 ? ledgerRoundOff : +(grandTotal - calculatedTotal).toFixed(2);
 
     if (partyName && partyName !== 'Cash Customer') {
@@ -2487,10 +2488,10 @@ export async function fetchSalesVouchersFromTally(
   const companyTag = targetCompany ? `<SVCURRENTCOMPANY>${xmlEscape(targetCompany)}</SVCURRENTCOMPANY>` : '';
 
   // Primary Query: date-bounded with formula PortalSalesInRange
-  const boundedQuery = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>${companyTag}<SVFROMDATE TYPE="Date">__SVFROMDATE__</SVFROMDATE><SVTODATE TYPE="Date">__SVTODATE__</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.List</FETCH><FETCH>LedgerEntries.List</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesOnly">$$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalDateInRange">$$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalSalesInRange">$$And:PortalIsSalesOnly:PortalDateInRange</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+  const boundedQuery = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PortalSalesInvoicesSafe</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>${companyTag}<SVFROMDATE TYPE="Date">__SVFROMDATE__</SVFROMDATE><SVTODATE TYPE="Date">__SVTODATE__</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="PortalSalesInvoicesSafe" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="Yes"><TYPE>Voucher</TYPE><FILTER>PortalSalesInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,Amount,IsCancelled,IsOptional</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="PortalIsSalesOnly">$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalDateInRange">$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="PortalSalesInRange">$And:PortalIsSalesOnly:PortalDateInRange</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
   // Fallback Query: Standard collection if custom TDL formula isn't supported by this Tally build
-  const standardQuery = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>StandardSalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>${companyTag}<SVFROMDATE TYPE="Date">__SVFROMDATE__</SVFROMDATE><SVTODATE TYPE="Date">__SVTODATE__</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="StandardSalesVouchers" ISMODIFY="No"><TYPE>Voucher</TYPE><FILTER>IsSalesVoucherInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,PartyGSTIN,GSTIN,PlaceOfSupply,StateName,BasicBuyerAddress,Address,Pincode,MobileNumber,PhoneNumber,Amount,Narration,IsCancelled,IsOptional</FETCH><FETCH>AllInventoryEntries.List</FETCH><FETCH>LedgerEntries.List</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsSalesVoucherOnly">$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="IsVoucherDateInRange">$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="IsSalesVoucherInRange">$And:IsSalesVoucherOnly:IsVoucherDateInRange</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+  const standardQuery = `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>StandardSalesVouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$SysName:XML</SVEXPORTFORMAT><SVViewName>Accounting Voucher View</SVViewName>${companyTag}<SVFROMDATE TYPE="Date">__SVFROMDATE__</SVFROMDATE><SVTODATE TYPE="Date">__SVTODATE__</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="StandardSalesVouchers" ISMODIFY="No"><TYPE>Voucher</TYPE><FILTER>IsSalesVoucherInRange</FILTER><FETCH>GUID,MASTERID,Date,VoucherNumber,Reference,VoucherTypeName,PartyLedgerName,PartyName,BasicBuyerName,Amount,IsCancelled,IsOptional</FETCH></COLLECTION><SYSTEM TYPE="Formulae" NAME="IsSalesVoucherOnly">$IsSales:$VoucherTypeName</SYSTEM><SYSTEM TYPE="Formulae" NAME="IsVoucherDateInRange">$IsBetween:$Date:##SVFROMDATE:##SVTODATE</SYSTEM><SYSTEM TYPE="Formulae" NAME="IsSalesVoucherInRange">$And:IsSalesVoucherOnly:IsVoucherDateInRange</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
 
   const invoiceMap = new Map<string, Invoice>();
   const parties = new Map<string, Party>();
