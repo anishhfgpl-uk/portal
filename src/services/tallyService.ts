@@ -2304,7 +2304,7 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
     });
 
     // If no inventory entries, check service sales ledger
-    if (items.length === 0) {
+    if (items.length === 0 && ledgerNodes.length > 0) {
       let serviceTaxable = serviceSalesTaxable;
       if (!serviceTaxable) {
         const anyAmt = getNodeValue(vch, 'AMOUNT');
@@ -2370,7 +2370,7 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
     const totalTax = totalCgst + totalSgst + totalIgst + ledgerCess;
 
     const calculatedTotal = subtotalTaxable + totalTax + ledgerFreight + ledgerLabour + ledgerOtherExpense + ledgerRoundOff;
-    const grandTotal = partyAmount > 0 ? partyAmount : Math.round(calculatedTotal);
+    const grandTotal = partyAmount > 0 ? partyAmount : (voucherAmount > 0 ? voucherAmount : Math.round(calculatedTotal));
     const roundOff = ledgerRoundOff !== 0 ? ledgerRoundOff : +(grandTotal - calculatedTotal).toFixed(2);
 
     if (partyName && partyName !== 'Cash Customer') {
