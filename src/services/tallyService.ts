@@ -2441,9 +2441,9 @@ export function parseSalesVouchersXML(xmlInput: string | Document, sellerInfo?: 
 }
 
 /**
- * Direct Live API to fetch Sales Vouchers from Tally Prime in safe sequential
- * 31-day batches. Defaults to the company's books beginning date, falling back
- * to the current FY only when Tally company dates are unavailable.
+ * Direct Live API to fetch Sales Vouchers from Tally Prime in small sequential
+ * 7-day batches to reduce Tally Prime memory pressure. Defaults to the current FY
+ * unless the user explicitly selects a date range.
  */
 export async function fetchSalesVouchersFromTally(
   config: TallyConfig = DEFAULT_TALLY_CONFIG,
@@ -2477,8 +2477,7 @@ export async function fetchSalesVouchersFromTally(
   if (selectedFrom && selectedTo && selectedFrom.getTime() > selectedTo.getTime()) throw new Error('From Date cannot be after To Date.');
 
   const fy = getCurrentFinancialYearRange();
-  const companyBooksStart = parseIsoDate(sellerInfo?.booksBeginningFrom || sellerInfo?.financialYearFrom);
-  const rangeFrom = selectedFrom || companyBooksStart || parseIsoDate(fy.start) || new Date(new Date().getFullYear(), 3, 1);
+  const rangeFrom = selectedFrom || parseIsoDate(fy.start) || new Date(new Date().getFullYear(), 3, 1);
   const rangeTo = selectedTo || new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
   if (rangeFrom.getTime() > rangeTo.getTime()) {
     rangeFrom.setTime(rangeTo.getTime());
@@ -2498,10 +2497,10 @@ export async function fetchSalesVouchersFromTally(
   const items = new Map<string, StockItem>();
   let lastError: Error | null = null;
 
-  // Import in safe sequential 30-day batches. Never Promise.all() to Tally.
+  // Import in safe sequential 7-day batches. Never Promise.all() to Tally.
   for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime();) {
     const batchEnd = new Date(cursor.getTime());
-    batchEnd.setDate(batchEnd.getDate() + 30);
+    batchEnd.setDate(batchEnd.getDate() + 6);
     if (batchEnd.getTime() > rangeTo.getTime()) batchEnd.setTime(rangeTo.getTime());
 
     const fromYmd = ymd(cursor);
