@@ -290,7 +290,7 @@ async function startServer() {
 
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const response = await fetch(targetUrl, {
@@ -355,7 +355,7 @@ async function startServer() {
       return res.status(502).json({
         success: false,
         error: bridgeResult?.error || (isTimeout
-          ? "Connection to Tally bridge/office at " + displayUrl + " timed out after 45s and office fallback did not respond."
+          ? "Connection to Tally bridge/office at " + displayUrl + " timed out after 15s; office polling fallback also did not respond."
           : "Failed to connect to Tally bridge/office at " + displayUrl + ": " + (fetchErr?.message || "Unknown error")),
         code: fetchErr?.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
       });
