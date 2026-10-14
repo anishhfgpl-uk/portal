@@ -2499,10 +2499,11 @@ export async function fetchSalesVouchersFromTally(
   const items = new Map<string, StockItem>();
   let lastError: Error | null = null;
 
-  // Import in safe sequential 7-day batches. Never Promise.all() to Tally.
+  // Import one calendar day per request to reduce Tally Prime memory/CPU pressure. Never parallelize requests.
   for (let cursor = new Date(rangeFrom.getTime()); cursor.getTime() <= rangeTo.getTime();) {
     const batchEnd = new Date(cursor.getTime());
-    batchEnd.setDate(batchEnd.getDate() + 6);
+    // Keep each Tally request limited to a single day.
+    batchEnd.setDate(batchEnd.getDate());
     if (batchEnd.getTime() > rangeTo.getTime()) batchEnd.setTime(rangeTo.getTime());
 
     const fromYmd = ymd(cursor);
@@ -2567,7 +2568,7 @@ export async function fetchSalesVouchersFromTally(
 
     cursor = new Date(batchEnd.getTime());
     cursor.setDate(cursor.getDate() + 1);
-    if (cursor.getTime() <= rangeTo.getTime()) await new Promise(resolve => setTimeout(resolve, 150));
+    if (cursor.getTime() <= rangeTo.getTime()) await new Promise(resolve => setTimeout(resolve, 900));
   }
 
   if (invoiceMap.size > 0) {
