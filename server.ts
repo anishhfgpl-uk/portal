@@ -333,30 +333,46 @@ async function startServer() {
     } catch (fetchErr: any) {
       clearTimeout(timeoutId);
 
-      const requestId = "tally-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
-      const bridgeResult = await new Promise<any>((resolve) => {
-        pendingBridgeRequests.set(requestId, { xml: xmlBody, resolve });
-        bridgeQueue.push(requestId);
-        setTimeout(() => {
-          const item = pendingBridgeRequests.get(requestId);
-          if (item) {
-            pendingBridgeRequests.delete(requestId);
-            item.resolve({ ok: false, error: "Office connector did not respond within 55s." });
-          }
-        }, 55000);
-      });
+      // The active Windows connector polls Portal-2's relay channel, not this
+      // server's private bridgeQueue. Forward fallback requests to that same
+      // channel so a failed Cloudflare tunnel can still reach office Tally.
+      const relayCode = (process.env.TALLY_RELAY_CODE || "1234").trim().toUpperCase();
+      const relayController = new AbortController();
+      const relayTimeoutId = setTimeout(() => relayController.abort(), 32000);
+      let relayResponse: Response | null = null;
+      let relayPayload: any = null;
+      try {
+        relayResponse = await fetch("https://anish-portal-2.onrender.com/api/tally-relay/request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: relayCode, xml: xmlBody }),
+          signal: relayController.signal,
+        });
+        relayPayload = await relayResponse.json().catch(() => null);
+      } catch (relayErr: any) {
+        relayPayload = { error: relayErr?.name === "AbortError"
+          ? "Portal-2 office relay timed out after 32s."
+          : (relayErr?.message || "Portal-2 office relay request failed.") };
+      } finally {
+        clearTimeout(relayTimeoutId);
+      }
 
-      if (bridgeResult?.ok && bridgeResult.xml) {
-        return res.status(200).json({ success: true, status: bridgeResult.status || 200, xml: bridgeResult.xml, via: "office-poll" });
+      if (relayResponse?.ok && relayPayload?.success && String(relayPayload?.xml || "").trim()) {
+        return res.status(200).json({
+          success: true,
+          status: relayPayload.status || 200,
+          xml: relayPayload.xml,
+          via: "portal-2-office-relay",
+        });
       }
 
       const isTimeout = fetchErr?.name === "AbortError";
       const displayUrl = bridgeUrl ? bridgeUrl + "/tally" : localTallyUrl;
       return res.status(502).json({
         success: false,
-        error: bridgeResult?.error || (isTimeout
-          ? "Connection to Tally bridge/office at " + displayUrl + " timed out after 15s; office polling fallback also did not respond."
-          : "Failed to connect to Tally bridge/office at " + displayUrl + ": " + (fetchErr?.message || "Unknown error")),
+        error: relayPayload?.error || (isTimeout
+          ? "Direct Tally bridge timed out after 15s and Portal-2 office relay did not return XML."
+          : "Direct Tally bridge failed and Portal-2 office relay did not return XML: " + (fetchErr?.message || "Unknown bridge error")),
         code: fetchErr?.code || (isTimeout ? "ETIMEDOUT" : "ECONNREFUSED"),
       });
     }
