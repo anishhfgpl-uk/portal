@@ -2530,13 +2530,20 @@ export async function fetchSalesVouchersFromTally(
         // Tally often returns HTTP 200 with an XML envelope even when a custom
         // TDL collection returns no vouchers (or is unsupported). Treat that as
         // a failed primary query so the compatibility query actually runs.
-        batchSuccess = parsed.invoices.length > 0;
+        // A valid XML response with zero sales is still a successful request.
+        // Do not immediately issue a second expensive voucher query for the same dates:
+        // this retry pattern can make Tally Prime hang on large company datasets.
+        batchSuccess = true;
       }
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err?.message || err));
+      // Stop on the first connector/Tally failure instead of sending another query
+      // while Tally may already be overloaded or unresponsive.
+      throw lastError;
     }
 
-    // If primary query failed or threw an error, try standard fallback query
+    // Keep the compatibility query only for a parsed-but-empty response when the
+    // primary query explicitly reports a TDL error; otherwise do not retry the same range.
     if (!batchSuccess) {
       const q2 = standardQuery.replace('__SVFROMDATE__', fromYmd).replace('__SVTODATE__', toYmd);
       try {
