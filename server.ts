@@ -310,12 +310,12 @@ async function startServer() {
         } catch {}
 
         if (!response.ok || !bridgePayload?.ok) {
-          return res.status(502).json({
-            success: false,
-            error:
-              bridgePayload?.error ||
-              `Office Tally connector returned HTTP ${response.status}`,
-          });
+          // Treat an HTTP 502/invalid bridge response like a bridge network failure.
+          // The office polling fallback below may still reach Tally when the tunnel route is unhealthy.
+          throw new Error(
+            bridgePayload?.error ||
+            `Office Tally connector returned HTTP ${response.status}`
+          );
         }
 
         return res.status(200).json({
