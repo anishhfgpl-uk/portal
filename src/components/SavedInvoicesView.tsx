@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Search,
   Printer,
@@ -89,6 +89,8 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [isImportingFromTally, setIsImportingFromTally] = useState<boolean>(false);
+  const autoImportStarted = useRef<boolean>(false);
+  const [autoImportReady, setAutoImportReady] = useState<boolean>(false);
   const [isImportingAccountingVouchers, setIsImportingAccountingVouchers] = useState<boolean>(false);
   const [accountingVouchers, setAccountingVouchers] = useState<TallyVoucher[]>([]);
   const [invoiceFromDate, setInvoiceFromDate] = useState<string>(() => {
@@ -241,6 +243,23 @@ export const SavedInvoicesView: React.FC<SavedInvoicesViewProps> = ({
       setIsImportingFromTally(false);
     }
   };
+
+  // On opening Saved Invoices, safely sync the most recent 7 days from Tally once.
+  // Keep startup requests bounded so a large historical scan cannot freeze Tally Prime.
+  useEffect(() => {
+    const today = new Date();
+    const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+    const fmt = (d: Date) => String(d.getFullYear()) + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    setInvoiceFromDate(fmt(from));
+    setInvoiceToDate(fmt(today));
+    setAutoImportReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!autoImportReady || autoImportStarted.current || !invoiceFromDate || !invoiceToDate) return;
+    autoImportStarted.current = true;
+    void handleImportFromTally();
+  }, [autoImportReady, invoiceFromDate, invoiceToDate]);
 
   // Import bounded Receipt, Payment and Credit Note vouchers without unbounded Tally scans.
   const handleImportAccountingVouchers = async () => {
