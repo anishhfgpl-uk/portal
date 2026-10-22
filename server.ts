@@ -247,7 +247,7 @@ async function startServer() {
   });
 
   // Outbound office polling fallback: the office connector polls this hosted endpoint.
-  const pendingBridgeRequests = new Map<string, { xml: string; resolve: (value: any) => void }>();
+  const pendingBridgeRequests = new Map<string, { xml: string; resolve: (value: any) => void; timer?: NodeJS.Timeout }>();
   const bridgeQueue: string[] = [];
   const bridgeTokenMatches = (req: any) => {
     const configured = process.env.TALLY_BRIDGE_TOKEN?.trim() || "";
@@ -333,9 +333,36 @@ async function startServer() {
     } catch (fetchErr: any) {
       clearTimeout(timeoutId);
 
-      // The active Windows connector polls Portal-2's relay channel, not this
-      // server's private bridgeQueue. Forward fallback requests to that same
-      // channel so a failed Cloudflare tunnel can still reach office Tally.
+      // First use the existing shared Windows connector's authenticated poll/respond
+      // channel. This is additive: direct Cloudflare bridge remains the primary path.
+      // It also avoids requiring a second, separately configured office relay agent.
+      const requestId = "bridge_" + crypto.randomUUID();
+      const queuedResult = await new Promise<any>((resolve) => {
+        const timer = setTimeout(() => {
+          pendingBridgeRequests.delete(requestId);
+          resolve({ ok: false, error: "Office connector did not answer the queued Tally request in time." });
+        }, 18000);
+        pendingBridgeRequests.set(requestId, {
+          xml: xmlBody,
+          timer,
+          resolve: (value: any) => {
+            clearTimeout(timer);
+            pendingBridgeRequests.delete(requestId);
+            resolve(value);
+          },
+        });
+        bridgeQueue.push(requestId);
+      });
+      if (queuedResult?.ok && String(queuedResult.xml || "").trim()) {
+        return res.status(200).json({
+          success: true,
+          status: queuedResult.status || 200,
+          xml: queuedResult.xml,
+          via: "shared-office-connector-queue",
+        });
+      }
+
+      // If the shared connector queue is unavailable, retain the existing Portal-2 relay fallback.
       const relayCode = (process.env.TALLY_RELAY_CODE || "1234").trim().toUpperCase();
       const relayController = new AbortController();
       const relayTimeoutId = setTimeout(() => relayController.abort(), 32000);
@@ -392,6 +419,7 @@ async function startServer() {
     const id = String(req.body?.id || "");
     const item = pendingBridgeRequests.get(id);
     if (!id || !item) return res.status(404).json({ ok: false, error: "Request not found or expired" });
+    if (item.timer) clearTimeout(item.timer);
     pendingBridgeRequests.delete(id);
     item.resolve({
       ok: Boolean(req.body?.ok),
